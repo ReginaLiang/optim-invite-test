@@ -109,11 +109,14 @@ async function call(method, path, body){
 
 // ---- persistence (this browser only) --------------------------------------
 try {
-  $('api').value   = localStorage.getItem('optim.api')   || '';
+  // Default to event. A real landing page knows its own API origin; this harness keeps the
+  // field visible so it can be pointed at another environment, but never demands it.
+  $('api').value   = localStorage.getItem('optim.api')   || 'https://event.optimportal.com';
   $('token').value = localStorage.getItem('optim.token') || '';
 } catch {}
 const qs = new URLSearchParams(location.search);
-if (qs.get('token')) $('token').value = qs.get('token');
+const fromMail = qs.get('token');
+if (fromMail) $('token').value = fromMail;
 for (const el of ['api','token']) {
   $(el).addEventListener('change', () => {
     try { localStorage.setItem('optim.' + el, $(el).value); } catch {}
@@ -121,7 +124,9 @@ for (const el of ['api','token']) {
 }
 
 // ---- step 2: resolve -------------------------------------------------------
-$('resolve').onclick = async () => {
+$('resolve').onclick = resolve;
+
+async function resolve() {
   if (!api() || !$('token').value.trim()) { log('Set the API base URL and the token first.'); return; }
   try { localStorage.setItem('optim.api', api()); localStorage.setItem('optim.token', $('token').value.trim()); } catch {}
   $('infoCard').hidden = true; $('actCard').hidden = true;
@@ -136,7 +141,14 @@ $('resolve').onclick = async () => {
   }
   renderInfo();
   renderAccept();
-};
+}
+
+// Arriving from the invitation mail, the token is already in the URL and the origin is known,
+// so there is nothing to ask for: resolve immediately and land the invitee on the provider
+// picker. The configuration card stays visible for pointing at another environment by hand.
+if (fromMail && api()) {
+  resolve();
+}
 
 function renderInfo(){
   const cls = {NONE:'b-none', REVOKED:'b-rev', ACTIVE:'b-act'}[INFO.accountState] || '';
