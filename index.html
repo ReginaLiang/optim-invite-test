@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Optim6 invitation — landing</title>
+<style>
+  :root{--bg:#fbfbfa;--fg:#1c1b19;--mut:#6b6862;--line:#e0ddd7;--card:#fff;--ok:#1a7f4b;--warn:#8a5a00;--err:#a02020;--code:#f4f2ee}
+  @media (prefers-color-scheme:dark){:root:not([data-theme=light]){--bg:#191817;--fg:#e8e6e1;--mut:#9a958c;--line:#33312e;--card:#211f1d;--ok:#5fbf8a;--warn:#d0a04a;--err:#e07a7a;--code:#26241f}}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif}
+  .wrap{max-width:760px;margin:0 auto;padding:32px 20px 64px}
+  h1{font-size:19px;margin:0 0 4px}
+  .sub{color:var(--mut);font-size:13px;margin-bottom:24px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:18px;margin-bottom:16px}
+  .card h2{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--mut);margin:0 0 12px;font-weight:600}
+  label{display:block;font-size:12px;color:var(--mut);margin:10px 0 4px}
+  input{width:100%;padding:9px 10px;border:1px solid var(--line);border-radius:7px;background:var(--bg);color:var(--fg);font:inherit;font-size:14px}
+  button{padding:10px 16px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--fg);font:inherit;font-size:14px;cursor:pointer}
+  button:hover{border-color:var(--mut)}
+  button.primary{background:var(--fg);color:var(--bg);border-color:var(--fg)}
+  button:disabled{opacity:.45;cursor:not-allowed}
+  .prov{display:flex;gap:10px;flex-wrap:wrap;margin-top:6px}
+  .prov button{display:flex;align-items:center;gap:8px;min-width:190px;justify-content:center}
+  .row{display:grid;grid-template-columns:130px 1fr;gap:6px 14px;font-size:14px}
+  .row dt{color:var(--mut);font-size:13px}
+  .row dd{margin:0;word-break:break-word}
+  pre{background:var(--code);border:1px solid var(--line);border-radius:7px;padding:11px;overflow-x:auto;font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;margin:8px 0 0}
+  .badge{display:inline-block;padding:2px 8px;border-radius:20px;font-size:12px;font-weight:600;border:1px solid}
+  .b-none{color:var(--ok);border-color:var(--ok)} .b-rev{color:var(--warn);border-color:var(--warn)} .b-act{color:var(--err);border-color:var(--err)}
+  .err{color:var(--err)} .muted{color:var(--mut);font-size:13px}
+  .log{font:12px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;word-break:break-word}
+  hr{border:0;border-top:1px solid var(--line);margin:16px 0}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Optim6 invitation — landing page</h1>
+  <div class="sub">Manual test harness for UC-01 / UC-02. Every request and raw response is shown below.</div>
+
+  <div class="card">
+    <h2>1 · Configuration</h2>
+    <label>API base URL <span class="muted">(origin only, no trailing slash)</span></label>
+    <input id="api" placeholder="https://event.optimportal.com">
+    <label>Invitation token <span class="muted">(from the mail link, or paste it)</span></label>
+    <input id="token" placeholder="the token in …/v6/invitations/&lt;token&gt;">
+    <div style="margin-top:14px"><button class="primary" id="resolve">Resolve invitation</button></div>
+    <div class="muted" style="margin-top:8px">Both values are remembered in this browser only.</div>
+  </div>
+
+  <div class="card" id="infoCard" hidden>
+    <h2>2 · What the link resolves to</h2>
+    <dl class="row" id="info"></dl>
+    <pre id="infoRaw"></pre>
+  </div>
+
+  <div class="card" id="actCard" hidden>
+    <h2>3 · Accept</h2>
+    <div id="actBody"></div>
+  </div>
+
+  <div class="card">
+    <h2>Log</h2>
+    <div class="log" id="log">idle.</div>
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const api = () => $('api').value.replace(/\/+$/, '');
+const BASE = '/actiontec/api/unauth/platform/v6';
+let INFO = null;
+
+function log(msg, obj){
+  const t = new Date().toISOString().slice(11,19);
+  let line = `[${t}] ${msg}`;
+  if (obj !== undefined) line += '\n' + JSON.stringify(obj, null, 2);
+  $('log').textContent = line + '\n\n' + $('log').textContent;
+}
+
+async function call(method, path, body){
+  const url = api() + BASE + path;
+  log(`${method} ${url}`, body);
+  let res, text;
+  try {
+    res = await fetch(url, {
+      method,
+      headers: body ? {'Content-Type':'application/json'} : undefined,
+      body: body ? JSON.stringify(body) : undefined
+    });
+    text = await res.text();
+  } catch (e) {
+    // The single most likely failure when this page is not on the API's origin.
+    log('NETWORK/CORS FAILURE — ' + e.message +
+        '\nThis page is cross-origin to the API. The browser blocks the response unless the ' +
+        'API returns Access-Control-Allow-Origin for this page origin (' + location.origin + ').');
+    throw e;
+  }
+  let data = null;
+  try { data = text ? JSON.parse(text) : null; } catch { data = text; }
+  log(`← ${res.status}`, data);
+  if (!res.ok) {
+    const err = new Error((data && data.message) || res.status);
+    err.payload = data; err.status = res.status;
+    throw err;
+  }
+  return data;
+}
+
+// ---- persistence (this browser only) --------------------------------------
+try {
+  $('api').value   = localStorage.getItem('optim.api')   || '';
+  $('token').value = localStorage.getItem('optim.token') || '';
+} catch {}
+const qs = new URLSearchParams(location.search);
+if (qs.get('token')) $('token').value = qs.get('token');
+for (const el of ['api','token']) {
+  $(el).addEventListener('change', () => {
+    try { localStorage.setItem('optim.' + el, $(el).value); } catch {}
+  });
+}
+
+// ---- step 2: resolve -------------------------------------------------------
+$('resolve').onclick = async () => {
+  if (!api() || !$('token').value.trim()) { log('Set the API base URL and the token first.'); return; }
+  try { localStorage.setItem('optim.api', api()); localStorage.setItem('optim.token', $('token').value.trim()); } catch {}
+  $('infoCard').hidden = true; $('actCard').hidden = true;
+  try {
+    INFO = await call('GET', `/invitations/${encodeURIComponent($('token').value.trim())}`);
+  } catch (e) {
+    $('infoCard').hidden = false;
+    $('info').innerHTML = '<dt>Result</dt><dd class="err">' +
+      (e.status ? e.status + ' · ' + ((e.payload && e.payload.errorType) || '') : 'request failed') + '</dd>';
+    $('infoRaw').textContent = JSON.stringify(e.payload ?? {}, null, 2);
+    return;
+  }
+  renderInfo();
+  renderAccept();
+};
+
+function renderInfo(){
+  const cls = {NONE:'b-none', REVOKED:'b-rev', ACTIVE:'b-act'}[INFO.accountState] || '';
+  const rows = [
+    ['accountState', `<span class="badge ${cls}">${INFO.accountState}</span>`],
+    ['email', INFO.email ?? '—'],
+    ['isp', INFO.isp ? `${INFO.isp.displayName ?? INFO.isp.name ?? ''} <span class="muted">(${INFO.isp.id})</span>` : '—'],
+    ['roles', (INFO.roles || []).map(r => r.displayName || r.name).join(', ') || '—'],
+    ['loginMethod', INFO.loginMethod ?? '—'],
+    ['expiresAt', INFO.expiresAt ? new Date(INFO.expiresAt).toLocaleString() : '—']
+  ];
+  $('info').innerHTML = rows.map(([k,v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('');
+  $('infoRaw').textContent = JSON.stringify(INFO, null, 2);
+  $('infoCard').hidden = false;
+}
+
+// ---- step 3: accept, shaped by accountState --------------------------------
+function renderAccept(){
+  const st = INFO.accountState;
+  const box = $('actBody');
+  $('actCard').hidden = false;
+
+  if (st === 'ACTIVE') {
+    box.innerHTML = '<p class="muted">This account already holds live grants, so the link is <b>navigation only</b>. ' +
+      'Any action here is <code>409 / 1438 SIGN_IN_REQUIRED</code> by design — sign in normally and accept from ' +
+      '<code>GET /v6/me/invitations</code> instead.</p>';
+    return;
+  }
+
+  const needNames = st === 'NONE';   // UM-3: names required only when the account is being created
+  box.innerHTML = `
+    ${needNames ? `
+      <label>First name</label><input id="fn">
+      <label>Last name</label><input id="ln">
+      <hr>` : `<p class="muted">accountState is <b>REVOKED</b> — the account exists, so names are <b>rejected</b> here.</p>`}
+    <div><b style="font-size:13px">Provider path</b></div>
+    <div class="prov" id="prov"><span class="muted">loading providers…</span></div>
+    <hr>
+    <div><b style="font-size:13px">Password path</b></div>
+    <label>Password</label><input id="pw" type="password" placeholder="${st === 'NONE' ? 'sets the account password — fixes login method to LOCAL for life' : 'the existing password, proving identity'}">
+    <div style="margin-top:12px"><button id="pwGo">Accept with password</button></div>
+    ${st === 'NONE' ? '<p class="muted" style="margin-top:12px">DECLINE is deliberately <b>not offered</b> here: with no account there is no identity to prove, and the link is not a credential. Ignoring the mail is the decline — the reaper purges it at expiry.</p>'
+                    : '<div style="margin-top:12px"><button id="declineGo">Decline</button></div>'}
+  `;
+  loadProviders();
+  $('pwGo').onclick = () => accept({ password: $('pw').value });
+  if ($('declineGo')) $('declineGo').onclick = () => act('DECLINE', {});
+}
+
+async function loadProviders(){
+  try {
+    const r = await call('GET', '/oauth2/providers');
+    const list = (r && r.data) || [];
+    if (!list.length) { $('prov').innerHTML = '<span class="muted">No enabled providers on this environment.</span>'; return; }
+    $('prov').innerHTML = '';
+    for (const p of list) {
+      const b = document.createElement('button');
+      b.textContent = 'Continue with ' + (p.displayName || p.providerType || p.id);
+      b.onclick = () => startRoundTrip(p);
+      $('prov').appendChild(b);
+    }
+  } catch {
+    $('prov').innerHTML = '<span class="err">Could not load providers — see the log.</span>';
+  }
+}
+
+// The authorize URL is built BY THE SERVER and carries a short-lived state
+// (oauth2.authorizationStateTtlSeconds, 600s). That is why it cannot be baked
+// into the invitation mail: it would be dead before most people opened it.
+async function startRoundTrip(provider){
+  const names = collectNames();
+  if (names === null) return;
+  try {
+    const r = await call('POST', '/oauth2/authorizations', {
+      providerId: provider.id,
+      purpose: 'INVITATION',
+      invitationToken: $('token').value.trim()
+    });
+    // The callback page needs to know which invitation this state belongs to.
+    sessionStorage.setItem('optim.pending', JSON.stringify({
+      api: api(), token: $('token').value.trim(), state: r.state,
+      accountState: INFO.accountState, ...names
+    }));
+    log('state minted, expiresIn=' + r.expiresIn + 's → navigating to the provider');
+    location.href = r.authorizationUrl;
+  } catch { /* logged */ }
+}
+
+function collectNames(){
+  if (INFO.accountState !== 'NONE') return {};
+  const fn = $('fn').value.trim(), ln = $('ln').value.trim();
+  if (!fn || !ln) { log('First and last name are required when accountState is NONE (UM-3).'); return null; }
+  return { firstName: fn, lastName: ln };
+}
+
+async function accept(extra){
+  const names = collectNames();
+  if (names === null) return;
+  await act('ACCEPT', { ...names, ...extra });
+}
+
+async function act(action, body){
+  try {
+    const r = await call('POST', `/invitations/${encodeURIComponent($('token').value.trim())}/action`,
+                         { action, ...body });
+    log(action + ' succeeded.', r);
+    $('actBody').innerHTML = '<p class="muted">Done — see the log for the response.</p><pre>' +
+      JSON.stringify(r ?? {}, null, 2) + '</pre>';
+  } catch { /* logged */ }
+}
+</script>
+</body>
+</html>
