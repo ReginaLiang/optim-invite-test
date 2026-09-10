@@ -5,7 +5,7 @@ Personal test harness — not a product surface, not the client's landing page.
 
 | Page | Role |
 |---|---|
-| `index.html` | Resolves an invitation token, shows what the link resolves to, and starts either the provider round trip or the password path |
+| `index.html` | Resolves the `?token=` from the mail link, shows what the invitation offers, and starts the provider round trip. Provider only — no password path |
 | `callback.html` | The registered `oauth2.redirectUri`. Receives `code` + `state` and posts the ACCEPT |
 
 Both show every request and the raw response, so a refusal is diagnosable from the page.
@@ -46,9 +46,14 @@ Three things must agree on the callback URL:
 3. **The provider app config** — the same URL registered as an authorized redirect URI in
    the Google Cloud console and/or the Microsoft Entra app registration.
 
-Then open `index.html`, fill in the API base URL and a token, and go. Both values are
-remembered in `localStorage`; the in-flight round trip is kept in `sessionStorage` and is
-**per-tab**, so start and finish in the same tab.
+Then open the link from the invitation mail. `index.html` takes the token from `?token=` and
+nothing else, and the API origin is baked into the page — neither is typed in, because a page
+that lets the visitor retype the origin can be pointed at somebody else's API, and a token box
+invites pasting a link somebody else received. Point the page at another environment by editing
+`API` at the top of its script.
+
+The in-flight round trip is kept in `sessionStorage` and is **per-tab**, so start and finish in
+the same tab.
 
 ## Two things that will bite first
 

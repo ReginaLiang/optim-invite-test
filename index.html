@@ -38,24 +38,14 @@
   <h1>Optim6 invitation — landing page</h1>
   <div class="sub">Manual test harness for UC-01 / UC-02. Every request and raw response is shown below.</div>
 
-  <div class="card">
-    <h2>1 · Configuration</h2>
-    <label>API base URL <span class="muted">(origin only, no trailing slash)</span></label>
-    <input id="api" placeholder="https://event.optimportal.com">
-    <label>Invitation token <span class="muted">(from the mail link, or paste it)</span></label>
-    <input id="token" placeholder="the token in …/v6/invitations/&lt;token&gt;">
-    <div style="margin-top:14px"><button class="primary" id="resolve">Resolve invitation</button></div>
-    <div class="muted" style="margin-top:8px">Both values are remembered in this browser only.</div>
-  </div>
-
   <div class="card" id="infoCard" hidden>
-    <h2>2 · What the link resolves to</h2>
+    <h2>1 · What the link resolves to</h2>
     <dl class="row" id="info"></dl>
     <pre id="infoRaw"></pre>
   </div>
 
   <div class="card" id="actCard" hidden>
-    <h2>3 · Accept</h2>
+    <h2>2 · Accept</h2>
     <div id="actBody"></div>
   </div>
 
@@ -67,7 +57,12 @@
 
 <script>
 const $ = id => document.getElementById(id);
-const api = () => $('api').value.replace(/\/+$/, '');
+// The API origin is a property of the deployment this page is published for, and the token is
+// only ever legitimate when it came from the mail link. Neither is an input any more: a page that
+// lets the visitor retype the origin is a page that can be pointed at somebody else's API, and a
+// token box invites pasting a link somebody else received.
+const API  = 'https://event.optimportal.com';
+const api = () => API;
 const BASE = '/actiontec/api/unauth/platform/v6';
 let INFO = null;
 
@@ -107,31 +102,14 @@ async function call(method, path, body){
   return data;
 }
 
-// ---- persistence (this browser only) --------------------------------------
-try {
-  // Default to event. A real landing page knows its own API origin; this harness keeps the
-  // field visible so it can be pointed at another environment, but never demands it.
-  $('api').value   = localStorage.getItem('optim.api')   || 'https://event.optimportal.com';
-  $('token').value = localStorage.getItem('optim.token') || '';
-} catch {}
-const qs = new URLSearchParams(location.search);
-const fromMail = qs.get('token');
-if (fromMail) $('token').value = fromMail;
-for (const el of ['api','token']) {
-  $(el).addEventListener('change', () => {
-    try { localStorage.setItem('optim.' + el, $(el).value); } catch {}
-  });
-}
+// ---- the token comes from the mail link, and from nowhere else --------------
+const TOKEN = (new URLSearchParams(location.search).get('token') || '').trim();
 
-// ---- step 2: resolve -------------------------------------------------------
-$('resolve').onclick = resolve;
-
+// ---- resolve ---------------------------------------------------------------
 async function resolve() {
-  if (!api() || !$('token').value.trim()) { log('Set the API base URL and the token first.'); return; }
-  try { localStorage.setItem('optim.api', api()); localStorage.setItem('optim.token', $('token').value.trim()); } catch {}
   $('infoCard').hidden = true; $('actCard').hidden = true;
   try {
-    INFO = await call('GET', `/invitations/${encodeURIComponent($('token').value.trim())}`);
+    INFO = await call('GET', `/invitations/${encodeURIComponent(TOKEN)}`);
   } catch (e) {
     $('infoCard').hidden = false;
     $('info').innerHTML = '<dt>Result</dt><dd class="err">' +
@@ -143,11 +121,15 @@ async function resolve() {
   renderAccept();
 }
 
-// Arriving from the invitation mail, the token is already in the URL and the origin is known,
-// so there is nothing to ask for: resolve immediately and land the invitee on the provider
-// picker. The configuration card stays visible for pointing at another environment by hand.
-if (fromMail && api()) {
+// Arriving from the invitation mail, the token is already in the URL and the origin is known, so
+// there is nothing to ask for: resolve immediately and land the invitee on the provider picker.
+if (TOKEN) {
   resolve();
+} else {
+  $('infoCard').hidden = false;
+  $('info').innerHTML = '<dt>Result</dt><dd class="err">no token in the URL</dd>';
+  $('infoRaw').textContent = 'Open this page from the link in the invitation mail — ' +
+    'it carries ?token=… . The token is never entered by hand.';
 }
 
 function renderInfo(){
@@ -165,7 +147,10 @@ function renderInfo(){
   $('infoCard').hidden = false;
 }
 
-// ---- step 3: accept, shaped by accountState --------------------------------
+// ---- accept, shaped by accountState ----------------------------------------
+// Provider only. The password path is deliberately absent: this page exists to exercise the
+// invitation round trip through Google / Microsoft, and offering a password box next to it
+// trains the invitee to type a password into a page they reached from a mailed link.
 function renderAccept(){
   const st = INFO.accountState;
   const box = $('actBody');
@@ -184,17 +169,11 @@ function renderAccept(){
       <label>First name</label><input id="fn">
       <label>Last name</label><input id="ln">
       <hr>` : `<p class="muted">accountState is <b>REVOKED</b> — the account exists, so names are <b>rejected</b> here.</p>`}
-    <div><b style="font-size:13px">Provider path</b></div>
     <div class="prov" id="prov"><span class="muted">loading providers…</span></div>
-    <hr>
-    <div><b style="font-size:13px">Password path</b></div>
-    <label>Password</label><input id="pw" type="password" placeholder="${st === 'NONE' ? 'sets the account password — fixes login method to LOCAL for life' : 'the existing password, proving identity'}">
-    <div style="margin-top:12px"><button id="pwGo">Accept with password</button></div>
     ${st === 'NONE' ? '<p class="muted" style="margin-top:12px">DECLINE is deliberately <b>not offered</b> here: with no account there is no identity to prove, and the link is not a credential. Ignoring the mail is the decline — the reaper purges it at expiry.</p>'
                     : '<div style="margin-top:12px"><button id="declineGo">Decline</button></div>'}
   `;
   loadProviders();
-  $('pwGo').onclick = () => accept({ password: $('pw').value });
   if ($('declineGo')) $('declineGo').onclick = () => act('DECLINE', {});
 }
 
@@ -225,11 +204,11 @@ async function startRoundTrip(provider){
     const r = await call('POST', '/oauth2/authorizations', {
       providerId: provider.id,
       purpose: 'INVITATION',
-      invitationToken: $('token').value.trim()
+      invitationToken: TOKEN
     });
     // The callback page needs to know which invitation this state belongs to.
     sessionStorage.setItem('optim.pending', JSON.stringify({
-      api: api(), token: $('token').value.trim(), state: r.state,
+      api: API, token: TOKEN, state: r.state,
       accountState: INFO.accountState, ...names
     }));
     log('state minted, expiresIn=' + r.expiresIn + 's → navigating to the provider');
@@ -244,15 +223,9 @@ function collectNames(){
   return { firstName: fn, lastName: ln };
 }
 
-async function accept(extra){
-  const names = collectNames();
-  if (names === null) return;
-  await act('ACCEPT', { ...names, ...extra });
-}
-
 async function act(action, body){
   try {
-    const r = await call('POST', `/invitations/${encodeURIComponent($('token').value.trim())}/action`,
+    const r = await call('POST', `/invitations/${encodeURIComponent(TOKEN)}/action`,
                          { action, ...body });
     log(action + ' succeeded.', r);
     $('actBody').innerHTML = '<p class="muted">Done — see the log for the response.</p><pre>' +
