@@ -49,6 +49,8 @@
 <script>
 const $ = id => document.getElementById(id);
 const BASE = '/actiontec/api/unauth/platform/v6';
+// A sign-in round trip stashes nothing, so this page needs its own default origin.
+const API  = 'https://event.optimportal.com';
 
 function log(msg, obj){
   const t = new Date().toISOString().slice(11,19);
@@ -74,6 +76,57 @@ $('params').innerHTML = [
 let pending = null;
 try { pending = JSON.parse(sessionStorage.getItem('optim.pending') || 'null'); } catch {}
 
+/**
+ * PROVIDER_CODE sign-in — the ordinary way a provider account gets a session.
+ *
+ * <p>Nothing about this is invitation-specific: the account already exists and the server
+ * resolves it by (oauth_config_id, subject), NOT by email address. That is why changing the
+ * address on the Google account does not strand the Optim account.
+ */
+async function signIn(){
+  const api = (pending && pending.api) || API;
+  const url = api + '/actiontec/api/unauth/platform/v6/sessions';
+  const body = { method: 'PROVIDER_CODE', state, code };
+  log('POST ' + url, body);
+  let res, text;
+  try {
+    res  = await fetch(url, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+    text = await res.text();
+  } catch (e) {
+    log('NETWORK/CORS FAILURE — ' + e.message);
+    $('result').innerHTML = '<span class="err">Network or CORS failure — see the log.</span>';
+    return;
+  }
+  let data = null;
+  try { data = text ? JSON.parse(text) : null; } catch { data = text; }
+  log('\u2190 ' + res.status, data);
+  $('raw').hidden = false;
+  $('raw').textContent = JSON.stringify(data ?? {}, null, 2);
+
+  if (!res.ok || !data || !data.accessToken) {
+    const t = (data && (data.errorType || data.message)) || res.status;
+    $('result').innerHTML = '<span class="err">Sign-in refused: ' + res.status + ' \u00b7 ' + t + '</span>';
+    return;
+  }
+  sessionStorage.removeItem('optim.pending');
+  const ctx = (data.actRole ? (data.actRole.displayName || data.actRole.name) : '?') + ' @ ' +
+              (data.actIsp ? (data.actIsp.displayName || data.actIsp.name) : '?');
+  $('result').innerHTML =
+    '<span class="ok"><b>Signed in.</b></span> <span class="muted">' + ctx + '</span>' +
+    '<p class="muted" style="margin-top:12px">Paste this into Postman\u2019s <code>accessToken</code> ' +
+    'collection variable, or into the portal\u2019s <code>localStorage.accessToken</code>. ' +
+    'The header is <code>X-Authorization: Bearer &lt;token&gt;</code>.</p>' +
+    '<textarea id="tok" readonly style="width:100%;height:110px;font:12px/1.5 ui-monospace,Menlo,monospace">' +
+    data.accessToken + '</textarea>' +
+    '<div style="margin-top:8px"><button id="copy">Copy token</button></div>';
+  $('copy').onclick = () => {
+    $('tok').select();
+    navigator.clipboard.writeText(data.accessToken).then(
+      () => log('token copied to the clipboard'),
+      () => log('clipboard refused \u2014 select the box and copy by hand'));
+  };
+}
+
 async function run(){
   if (perr) {
     $('result').innerHTML = '<span class="err">The provider refused: ' + perr + '</span>';
@@ -84,11 +137,12 @@ async function run(){
     $('result').innerHTML = '<span class="err">Missing <code>code</code> or <code>state</code> — nothing to exchange.</span>';
     return;
   }
-  if (!pending) {
-    $('result').innerHTML = '<span class="err">No pending invitation in this tab\'s sessionStorage.</span>' +
-      '<p class="muted">The round trip must be started from the landing page in the <b>same tab</b> — ' +
-      'sessionStorage is per-tab. Start again from <a href="./index.html">index.html</a>.</p>';
-    return;
+  // Two round trips land here, and the client is the only one that has to tell them apart:
+  // the server knows the purpose from the state it minted, but the CLIENT must know which
+  // endpoint to redeem at. An invitation stashes what it belongs to; a sign-in stashes
+  // nothing it needs, so "nothing stashed" IS the sign-in case.
+  if (!pending || pending.purpose === 'SIGN_IN') {
+    return signIn();
   }
   if (pending.state && pending.state !== state) {
     // Not the security check — the server enforces that. This only catches a stale tab.

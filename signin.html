@@ -1,0 +1,99 @@
+<title>Optim6 sign-in — Google / Microsoft</title>
+<style>
+  :root{--bg:#fbfbfa;--fg:#1c1b19;--mut:#6b6862;--line:#e0ddd7;--card:#fff;--ok:#1a7f4b;--warn:#8a5a00;--err:#a02020;--code:#f4f2ee}
+  @media (prefers-color-scheme:dark){:root:not([data-theme=light]){--bg:#191817;--fg:#e8e6e1;--mut:#9a958c;--line:#33312e;--card:#211f1d;--ok:#5fbf8a;--warn:#d0a04a;--err:#e07a7a;--code:#26241f}}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif}
+  .wrap{max-width:760px;margin:0 auto;padding:32px 20px 64px}
+  h1{font-size:19px;margin:0 0 4px}
+  .sub{color:var(--mut);font-size:13px;margin-bottom:24px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:18px;margin-bottom:16px}
+  .card h2{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--mut);margin:0 0 12px;font-weight:600}
+  label{display:block;font-size:12px;color:var(--mut);margin:10px 0 4px}
+  input{width:100%;padding:9px 10px;border:1px solid var(--line);border-radius:7px;background:var(--bg);color:var(--fg);font:inherit;font-size:14px}
+  button{padding:10px 16px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--fg);font:inherit;font-size:14px;cursor:pointer}
+  button:hover{border-color:var(--mut)}
+  button.primary{background:var(--fg);color:var(--bg);border-color:var(--fg)}
+  button:disabled{opacity:.45;cursor:not-allowed}
+  .prov{display:flex;gap:10px;flex-wrap:wrap;margin-top:6px}
+  .prov button{display:flex;align-items:center;gap:8px;min-width:190px;justify-content:center}
+  .row{display:grid;grid-template-columns:130px 1fr;gap:6px 14px;font-size:14px}
+  .row dt{color:var(--mut);font-size:13px}
+  .row dd{margin:0;word-break:break-word}
+  pre{background:var(--code);border:1px solid var(--line);border-radius:7px;padding:11px;overflow-x:auto;font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;margin:8px 0 0}
+  .badge{display:inline-block;padding:2px 8px;border-radius:20px;font-size:12px;font-weight:600;border:1px solid}
+  .b-none{color:var(--ok);border-color:var(--ok)} .b-rev{color:var(--warn);border-color:var(--warn)} .b-act{color:var(--err);border-color:var(--err)}
+  .err{color:var(--err)} .muted{color:var(--mut);font-size:13px}
+  .log{font:12px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;word-break:break-word}
+  hr{border:0;border-top:1px solid var(--line);margin:16px 0}
+</style>
+<div class="wrap">
+  <h1>Optim6 sign-in</h1>
+  <div class="sub">The ordinary provider sign-in, outside the portal — for getting a token into Postman.</div>
+
+  <div class="card">
+    <h2>Choose a provider</h2>
+    <div class="prov" id="prov"><span class="muted">loading providers…</span></div>
+    <p class="muted" style="margin-top:14px">
+      The server builds the authorization URL and mints the <code>state</code>; this page never
+      constructs either. You will come back at <code>callback.html</code>, which completes the
+      exchange and hands you the token.
+    </p>
+  </div>
+
+  <div class="card"><h2>Log</h2><div class="log" id="log">idle.</div></div>
+</div>
+<script>
+const API  = 'https://event.optimportal.com';
+const BASE = '/actiontec/api/unauth/platform/v6';
+const $ = id => document.getElementById(id);
+
+function log(msg, obj){
+  const t = new Date().toISOString().slice(11,19);
+  let line = '[' + t + '] ' + msg;
+  if (obj !== undefined) line += '\n' + JSON.stringify(obj, null, 2);
+  $('log').textContent = line + '\n\n' + $('log').textContent;
+}
+
+async function call(method, path, body){
+  const url = API + BASE + path;
+  log(method + ' ' + url, body);
+  const res = await fetch(url, {
+    method,
+    headers: body ? {'Content-Type':'application/json'} : undefined,
+    body: body ? JSON.stringify(body) : undefined
+  });
+  const text = await res.text();
+  let data = null;
+  try { data = text ? JSON.parse(text) : null; } catch { data = text; }
+  log('← ' + res.status, data);
+  if (!res.ok) throw Object.assign(new Error(res.status), {payload:data, status:res.status});
+  return data;
+}
+
+(async function loadProviders(){
+  try {
+    const list = (await call('GET', '/oauth2/providers')).data || [];
+    if (!list.length) { $('prov').innerHTML = '<span class="muted">No enabled providers.</span>'; return; }
+    $('prov').innerHTML = '';
+    for (const p of list) {
+      const b = document.createElement('button');
+      b.textContent = 'Sign in with ' + (p.displayName || p.providerType || p.id);
+      b.onclick = () => start(p);
+      $('prov').appendChild(b);
+    }
+  } catch { $('prov').innerHTML = '<span class="err">Could not load providers — see the log.</span>'; }
+})();
+
+// purpose: SIGN_IN, and NO invitation token — that is the whole difference from the
+// invitation round trip. callback.html reads the stash to know which one came back.
+async function start(provider){
+  try {
+    const r = await call('POST', '/oauth2/authorizations',
+                         { providerId: provider.id, purpose: 'SIGN_IN' });
+    sessionStorage.setItem('optim.pending', JSON.stringify({ purpose:'SIGN_IN', api:API, state:r.state }));
+    log('state minted, expiresIn=' + r.expiresIn + 's — navigating to the provider');
+    location.href = r.authorizationUrl;
+  } catch { /* logged */ }
+}
+</script>
