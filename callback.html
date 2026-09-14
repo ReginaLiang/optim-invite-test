@@ -148,10 +148,10 @@ async function run(){
   const action = pending.action === 'DECLINE' ? 'DECLINE' : 'ACCEPT';
   const body = { action, state, code };
 
-  // No names are sent. On the account-creating path the server takes them from the provider's
-  // assertion (UM-3 as amended by TRS v2.12); a body carrying them would override it, which is
-  // what keeps them editable, and this harness has nothing to override with. On REVOKED they are
-  // refused outright, since no account is renamed through a mailed link.
+  // No names are sent, and none may be: the server writes them from the provider's assertion on
+  // the account-creating path (UM-3 as amended by TRS v2.12) and refuses a body that names either,
+  // in both account states. On REVOKED that is the older rule — no account is renamed through a
+  // mailed link — and on NONE it is the new one: the provider is the single source.
 
   const url = pending.api + BASE + '/invitations/' + encodeURIComponent(pending.token) + '/action';
   let out;

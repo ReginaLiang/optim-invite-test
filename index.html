@@ -180,11 +180,11 @@ function renderActions(){
     // ("DECLINE is not available before the account exists", 400 / 1439). With no account there is
     // no identity to prove, and the link is not a credential.
     box.innerHTML = `
-      <p class="muted">No name is asked for and none is sent. The server takes
+      <p class="muted">No name is asked for and none may be sent. The server writes
       <code>firstName</code> / <code>lastName</code> from the provider's assertion
-      (<code>given_name</code> / <code>family_name</code>) — UM-3 as amended by TRS v2.12. A body that
-      carries names would override the assertion, which is how they stay editable; this page sends
-      none, which is the ordinary client.</p>
+      (<code>given_name</code> / <code>family_name</code>) — UM-3 as amended by TRS v2.12 — and a body
+      naming either is <code>400 / 1439</code>. The account holder changes them from their profile
+      after signing in. A provider that asserts neither cannot create the account.</p>
       <div class="prov" id="prov"><span class="muted">loading providers…</span></div>
       <p class="muted" style="margin-top:12px"><b>Decline is not offered here.</b> With no account there is
       no identity to prove, so the server refuses it with <code>400 / 1439</code>. Ignoring the mail is the
