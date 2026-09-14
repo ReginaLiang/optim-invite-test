@@ -148,13 +148,10 @@ async function run(){
   const action = pending.action === 'DECLINE' ? 'DECLINE' : 'ACCEPT';
   const body = { action, state, code };
 
-  // UM-3: names are required only where the account is being created, and never on a DECLINE —
-  // which cannot reach the account-creation branch at all (the server refuses DECLINE while
-  // accountState is NONE).
-  if (action === 'ACCEPT' && pending.accountState === 'NONE') {
-    body.firstName = pending.firstName;
-    body.lastName  = pending.lastName;
-  }
+  // No names are sent. On the account-creating path the server takes them from the provider's
+  // assertion (UM-3 as amended by TRS v2.12); a body carrying them would override it, which is
+  // what keeps them editable, and this harness has nothing to override with. On REVOKED they are
+  // refused outright, since no account is renamed through a mailed link.
 
   const url = pending.api + BASE + '/invitations/' + encodeURIComponent(pending.token) + '/action';
   let out;

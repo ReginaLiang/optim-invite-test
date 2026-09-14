@@ -179,13 +179,12 @@ function renderActions(){
     // Spec-confirmed, not a page limitation: the server refuses DECLINE before the account exists
     // ("DECLINE is not available before the account exists", 400 / 1439). With no account there is
     // no identity to prove, and the link is not a credential.
-    const n = derivedNames();
     box.innerHTML = `
-      <p class="muted">The account is being created, so UM-3 makes <code>firstName</code> and
-      <code>lastName</code> mandatory — <code>user.first_name</code> / <code>last_name</code> are
-      <code>NOT NULL</code> and the invitation row carries no names. They are not typed here: the page
-      derives them from the invited address and sends
-      <code>${n.firstName}</code> / <code>${n.lastName}</code>.</p>
+      <p class="muted">No name is asked for and none is sent. The server takes
+      <code>firstName</code> / <code>lastName</code> from the provider's assertion
+      (<code>given_name</code> / <code>family_name</code>) — UM-3 as amended by TRS v2.12. A body that
+      carries names would override the assertion, which is how they stay editable; this page sends
+      none, which is the ordinary client.</p>
       <div class="prov" id="prov"><span class="muted">loading providers…</span></div>
       <p class="muted" style="margin-top:12px"><b>Decline is not offered here.</b> With no account there is
       no identity to prove, so the server refuses it with <code>400 / 1439</code>. Ignoring the mail is the
@@ -249,7 +248,6 @@ async function loadProviders(){
 // (oauth2.authorizationStateTtlSeconds, 600s). That is why it cannot be baked
 // into the invitation mail: it would be dead before most people opened it.
 async function startRoundTrip(provider){
-  const names = collectNames();
   try {
     const r = await call('POST', '/oauth2/authorizations', {
       providerId: provider.id,
@@ -262,7 +260,7 @@ async function startRoundTrip(provider){
     sessionStorage.setItem('optim.pending', JSON.stringify({
       purpose: 'INVITATION', action: ACTION,
       api: API, token: TOKEN, state: r.state,
-      accountState: INFO.accountState, ...names
+      accountState: INFO.accountState
     }));
     say('State minted, expires in ' + r.expiresIn + 's — sending you to the provider to ' +
         ACTION.toLowerCase() + '…');
@@ -273,28 +271,7 @@ async function startRoundTrip(provider){
   }
 }
 
-/**
- * UM-3 names for the account-creation path, derived rather than typed.
- *
- * <p>They cannot simply be dropped from the request: {@code createAccountViaLink} refuses a body
- * without them with {@code 400 / 1439}, because {@code user.first_name} and {@code user.last_name}
- * are {@code NOT NULL} columns and the {@code invitation} row holds no names to fall back on. The
- * provider profile is not consulted for them either — the server reads the body and nothing else.
- * So the harness stops ASKING for them and keeps SENDING them.
- */
-function derivedNames(){
-  const local = String(INFO.email || '').split('@')[0] || 'optim';
-  const parts = local.split(/[._-]+/).filter(Boolean);
-  const cap = w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase();
-  return {
-    firstName: cap(parts[0] || 'Optim'),
-    lastName:  cap(parts.slice(1).join(' ') || 'Invitee')
-  };
-}
 
-function collectNames(){
-  return INFO.accountState === 'NONE' ? derivedNames() : {};
-}
 </script>
 </body>
 </html>
