@@ -20,6 +20,9 @@
   .ok{color:var(--ok)} .err{color:var(--err)} .muted{color:var(--mut);font-size:13px}
   button{padding:10px 16px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--fg);font:inherit;font-size:14px;cursor:pointer}
   button:hover{border-color:var(--mut)}
+  button:disabled{opacity:.45;cursor:not-allowed}
+  button.primary{background:var(--fg);color:var(--bg);border-color:var(--fg)}
+  .choice{display:flex;gap:10px;flex-wrap:wrap;margin:14px 0 4px}
   a{color:inherit}
 </style>
 </head>
@@ -119,40 +122,70 @@ async function signIn(){
   };
 }
 
-async function run(){
-  if (perr) {
-    fail('The provider refused: ' + perr + ' — nothing was sent to the API.');
-    return;
+/**
+ * The invitation half of the callback: ask, then act. Nothing is submitted on arrival.
+ *
+ * The round trip only proves WHO is knocking; it does not say what they came to do, and the page
+ * deliberately does not decide for them. Declining deletes the invitation and its inert grants
+ * outright — there is no DECLINED status — so the click that does it belongs here, after the
+ * provider login and immediately before the act, rather than several minutes earlier on a page
+ * they have since navigated away from.
+ */
+function offerActions(){
+  const st = pending.accountState;
+  const declinable = st === 'REVOKED';
+
+  $('result').innerHTML =
+    '<p class="muted">The provider sent you back with a usable <code>code</code>. ' +
+    'Nothing has been submitted yet — <b>choose what to do with the invitation</b>.</p>' +
+    '<div class="choice">' +
+      '<button id="doAccept" class="primary">Accept</button>' +
+      (declinable ? '<button id="doDecline">Decline</button>' : '') +
+    '</div>' +
+    '<p class="muted" id="note">' + (declinable
+      ? 'Accepting activates the invited grants on the account that already exists; the user id, ' +
+        'the identity row and the audit history survive untouched (ID-7).'
+      : 'accountState is <b>' + st + '</b>, so accepting <b>creates the account</b> and activates ' +
+        'the invited grants in one transaction — creation is acceptance. The names come from the ' +
+        'provider. <b>Decline is not offered</b>: with no account there is no identity to prove, ' +
+        'so the server refuses it with <code>400 / 1439</code>.') +
+    '</p>';
+
+  $('doAccept').onclick = () => submit('ACCEPT');
+  if (declinable) {
+    const decline = $('doDecline');
+    decline.onmouseenter = () => { $('note').innerHTML =
+      '<b>Declining deletes the invitation and its inert grants.</b> There is no DECLINED status, ' +
+      'so this cannot be undone — the link afterwards answers <code>410 / 1433</code> and only a ' +
+      'fresh invitation restores it. The account itself is untouched and stays revoked.'; };
+    // Two clicks, because the first is a choice and the second is a confirmation. The state is
+    // single-use, so a mis-click here costs the whole round trip.
+    let armed = false;
+    decline.onclick = () => {
+      if (!armed) {
+        armed = true;
+        decline.textContent = 'Confirm decline';
+        decline.style.borderColor = 'var(--err)';
+        decline.style.color = 'var(--err)';
+        return;
+      }
+      submit('DECLINE');
+    };
   }
-  if (!code || !state) {
-    fail('Missing <code>code</code> or <code>state</code> — nothing to redeem.');
-    return;
-  }
-  // Two round trips land here, and the client is the only one that has to tell them apart:
-  // the server knows the purpose from the state it minted, but the CLIENT must know which
-  // endpoint to redeem at. An invitation stashes what it belongs to; a sign-in stashes
-  // nothing it needs, so "nothing stashed" IS the sign-in case.
-  if (!pending || pending.purpose === 'SIGN_IN') {
-    return signIn();
-  }
-  if (pending.state && pending.state !== state) {
-    // Not the security check — the server enforces that. This only catches a stale tab.
-    $('result').innerHTML = '<span class="muted">Note: the returned state is not the one this tab ' +
-      'minted (stale tab?). Continuing — the server refuses it with 1421/1472 if it is genuinely wrong.</span>';
-  }
+}
+
+async function submit(action){
+  const buttons = document.querySelectorAll('.choice button');
+  buttons.forEach(b => { b.disabled = true; });
 
   // ACCEPT and DECLINE are the same round trip and the same proof (IV-11 ②). Only the action
-  // differs, and for a provider account BOTH need the code and the state: declining a revoked
-  // account still has to prove who is knocking, or a mailed link alone could delete somebody
-  // else's invitation.
-  const action = pending.action === 'DECLINE' ? 'DECLINE' : 'ACCEPT';
-  const body = { action, state, code };
-
+  // differs, and for a provider account BOTH need the code and the state: declining still has to
+  // prove who is knocking, or a mailed link alone could delete somebody else's invitation.
+  //
   // No names are sent, and none may be: the server writes them from the provider's assertion on
   // the account-creating path (UM-3 as amended by TRS v2.12) and refuses a body that names either,
-  // in both account states. On REVOKED that is the older rule — no account is renamed through a
-  // mailed link — and on NONE it is the new one: the provider is the single source.
-
+  // in both account states.
+  const body = { action, state, code };
   const url = pending.api + BASE + '/invitations/' + encodeURIComponent(pending.token) + '/action';
   let out;
   try {
@@ -167,9 +200,11 @@ async function run(){
 
   if (!res.ok) {
     $('result').innerHTML =
-      '<span class="err">' + action + ' refused: ' + res.status + ' · ' +
+      '<span class="err">' + action + ' refused: ' + res.status + ' \u00b7 ' +
       ((data && (data.errorType || data.message)) || res.status) + '</span>' +
-      hint(data && data.errorCode);
+      hint(data && data.errorCode) +
+      '<p class="muted">The state is spent either way, so retrying needs a fresh round trip from ' +
+      'the landing page.</p>';
     return;
   }
 
@@ -193,6 +228,37 @@ async function run(){
         (g.isp && (g.isp.displayName || g.isp.name || g.isp.id)) + ' → ' +
         (g.roles || []).map(r => r.displayName || r.name).join(', ')
       ).join(' · ') + '</p>' : '');
+}
+
+function run(){
+  if (perr) {
+    fail('The provider refused: ' + perr + ' — nothing was sent to the API.');
+    return;
+  }
+  if (!code || !state) {
+    fail('Missing <code>code</code> or <code>state</code> — nothing to redeem.');
+    return;
+  }
+  // Two round trips land here, and the client is the only one that has to tell them apart:
+  // the server knows the purpose from the state it minted, but the CLIENT must know which
+  // endpoint to redeem at. An invitation stashes what it belongs to; a sign-in stashes
+  // nothing it needs, so "nothing stashed" IS the sign-in case.
+  if (!pending || pending.purpose === 'SIGN_IN') {
+    return signIn();
+  }
+  if (pending.state && pending.state !== state) {
+    // Not the security check — the server enforces that. This only catches a stale tab.
+    log0('Note: the returned state is not the one this tab minted (stale tab?). Continuing — the ' +
+         'server refuses it with 1421/1472 if it is genuinely wrong.');
+  }
+  offerActions();
+}
+
+function log0(msg){
+  const p = document.createElement('p');
+  p.className = 'muted';
+  p.textContent = msg;
+  $('resultCard').appendChild(p);
 }
 
 // The refusals this flow actually produces, so a failure is diagnosable from the page.

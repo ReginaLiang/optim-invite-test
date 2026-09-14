@@ -20,8 +20,6 @@
   button:disabled{opacity:.45;cursor:not-allowed}
   .prov{display:flex;gap:10px;flex-wrap:wrap;margin-top:6px}
   .prov button{display:flex;align-items:center;gap:8px;min-width:190px;justify-content:center}
-  .choice{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:4px}
-  .choice button[aria-pressed=true]{background:var(--fg);color:var(--bg);border-color:var(--fg)}
   .row{display:grid;grid-template-columns:130px 1fr;gap:6px 14px;font-size:14px}
   .row dt{color:var(--mut);font-size:13px}
   .row dd{margin:0;word-break:break-word}
@@ -60,11 +58,6 @@ const $ = id => document.getElementById(id);
 const API  = 'https://event.optimportal.com';
 const BASE = '/actiontec/api/unauth/platform/v6';
 let INFO = null;
-
-// The action the provider round trip is being started FOR. Both ACCEPT and DECLINE prove identity
-// the same way on a provider account (IV-11 ②), so the choice only decides what the callback page
-// posts when it gets back — it changes nothing about the round trip itself.
-let ACTION = 'ACCEPT';
 
 function say(html, isErr){
   $('actMsg').className = 'msg' + (isErr ? ' err' : ' muted');
@@ -189,40 +182,19 @@ function renderActions(){
       <p class="muted" style="margin-top:12px"><b>Decline is not offered here.</b> With no account there is
       no identity to prove, so the server refuses it with <code>400 / 1439</code>. Ignoring the mail is the
       decline — the IV-8 reaper purges the invitation at expiry.</p>`;
-    ACTION = 'ACCEPT';
     loadProviders();
     return;
   }
 
-  // REVOKED with a provider account: accept and decline are both on offer, and both take the same
-  // round trip. The choice is made BEFORE the provider button, because it travels with the state.
+  // REVOKED with a provider account: both actions are on offer and both take the SAME round trip,
+  // so there is nothing to choose here. The choice is made on the callback page, after the provider
+  // has proved who is knocking and immediately before the act itself — which matters because
+  // declining deletes the invitation and cannot be undone.
   box.innerHTML = `
     <p class="muted">accountState is <b>REVOKED</b> — the account exists, so names are <b>rejected</b> here.
-    Both actions prove it is you through the provider first (IV-11 ②); the round trip is identical and
-    only the action posted on the way back differs.</p>
-    <div class="choice">
-      <button id="pickAccept" aria-pressed="true">Accept</button>
-      <button id="pickDecline" aria-pressed="false">Decline</button>
-    </div>
-    <p class="muted" id="choiceNote"></p>
+    Accepting and declining prove it is you the same way, through the provider (IV-11 ②); only the action
+    posted on the way back differs. <b>You choose which on the callback page</b>, once you are back.</p>
     <div class="prov" id="prov"><span class="muted">loading providers…</span></div>`;
-
-  const notes = {
-    ACCEPT: 'The invited grants activate and a session is returned (<code>200</code>). The user id, ' +
-            'the identity row and the audit history all survive untouched (ID-7).',
-    DECLINE: 'The invitation and its inert grants are <b>deleted</b> — there is no DECLINED status ' +
-             '(<code>204</code>, no body). The account itself stays revoked; nothing is activated.'
-  };
-  const pick = a => {
-    ACTION = a;
-    $('pickAccept').setAttribute('aria-pressed', String(a === 'ACCEPT'));
-    $('pickDecline').setAttribute('aria-pressed', String(a === 'DECLINE'));
-    $('choiceNote').innerHTML = notes[a];
-    say('');
-  };
-  $('pickAccept').onclick  = () => pick('ACCEPT');
-  $('pickDecline').onclick = () => pick('DECLINE');
-  pick('ACCEPT');
   loadProviders();
 }
 
@@ -254,16 +226,16 @@ async function startRoundTrip(provider){
       purpose: 'INVITATION',
       invitationToken: TOKEN
     });
-    // The callback page needs to know which invitation this state belongs to, and WHICH ACTION the
-    // person chose: the state proves the round trip was authorised for this invitation, it does not
-    // record whether they meant to accept or decline.
+    // The callback page needs to know which invitation this state belongs to, and which
+    // accountState it resolved to — the state proves the round trip was authorised for this
+    // invitation, it does not say which actions are legal on it. No action is stashed: the person
+    // picks it there, having not yet been asked.
     sessionStorage.setItem('optim.pending', JSON.stringify({
-      purpose: 'INVITATION', action: ACTION,
+      purpose: 'INVITATION',
       api: API, token: TOKEN, state: r.state,
       accountState: INFO.accountState
     }));
-    say('State minted, expires in ' + r.expiresIn + 's — sending you to the provider to ' +
-        ACTION.toLowerCase() + '…');
+    say('State minted, expires in ' + r.expiresIn + 's — sending you to the provider…');
     location.href = r.authorizationUrl;
   } catch (e) {
     say(e.status ? e.status + ' · ' + ((e.payload && e.payload.errorType) || e.message) : e.message, true);
