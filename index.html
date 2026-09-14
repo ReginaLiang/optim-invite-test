@@ -14,14 +14,14 @@
   .sub{color:var(--mut);font-size:13px;margin-bottom:24px}
   .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:18px;margin-bottom:16px}
   .card h2{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--mut);margin:0 0 12px;font-weight:600}
-  label{display:block;font-size:12px;color:var(--mut);margin:10px 0 4px}
-  input{width:100%;padding:9px 10px;border:1px solid var(--line);border-radius:7px;background:var(--bg);color:var(--fg);font:inherit;font-size:14px}
   button{padding:10px 16px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--fg);font:inherit;font-size:14px;cursor:pointer}
   button:hover{border-color:var(--mut)}
   button.primary{background:var(--fg);color:var(--bg);border-color:var(--fg)}
   button:disabled{opacity:.45;cursor:not-allowed}
   .prov{display:flex;gap:10px;flex-wrap:wrap;margin-top:6px}
   .prov button{display:flex;align-items:center;gap:8px;min-width:190px;justify-content:center}
+  .choice{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:4px}
+  .choice button[aria-pressed=true]{background:var(--fg);color:var(--bg);border-color:var(--fg)}
   .row{display:grid;grid-template-columns:130px 1fr;gap:6px 14px;font-size:14px}
   .row dt{color:var(--mut);font-size:13px}
   .row dd{margin:0;word-break:break-word}
@@ -29,14 +29,13 @@
   .badge{display:inline-block;padding:2px 8px;border-radius:20px;font-size:12px;font-weight:600;border:1px solid}
   .b-none{color:var(--ok);border-color:var(--ok)} .b-rev{color:var(--warn);border-color:var(--warn)} .b-act{color:var(--err);border-color:var(--err)}
   .err{color:var(--err)} .muted{color:var(--mut);font-size:13px}
-  .log{font:12px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;word-break:break-word}
-  hr{border:0;border-top:1px solid var(--line);margin:16px 0}
+  .msg{font-size:13px;margin-top:12px;min-height:1em}
 </style>
 </head>
 <body>
 <div class="wrap">
   <h1>Optim6 invitation — landing page</h1>
-  <div class="sub">Manual test harness for UC-01 / UC-02. Every request and raw response is shown below.</div>
+  <div class="sub">Manual test harness for UC-01 / UC-02. The raw response of each call is shown with it.</div>
 
   <div class="card" id="infoCard" hidden>
     <h2>1 · What the link resolves to</h2>
@@ -45,13 +44,10 @@
   </div>
 
   <div class="card" id="actCard" hidden>
-    <h2>2 · Accept</h2>
+    <h2>2 · Accept or decline</h2>
     <div id="actBody"></div>
-  </div>
-
-  <div class="card">
-    <h2>Log</h2>
-    <div class="log" id="log">idle.</div>
+    <div class="msg" id="actMsg"></div>
+    <pre id="actRaw" hidden></pre>
   </div>
 </div>
 
@@ -62,20 +58,26 @@ const $ = id => document.getElementById(id);
 // lets the visitor retype the origin is a page that can be pointed at somebody else's API, and a
 // token box invites pasting a link somebody else received.
 const API  = 'https://event.optimportal.com';
-const api = () => API;
 const BASE = '/actiontec/api/unauth/platform/v6';
 let INFO = null;
 
-function log(msg, obj){
-  const t = new Date().toISOString().slice(11,19);
-  let line = `[${t}] ${msg}`;
-  if (obj !== undefined) line += '\n' + JSON.stringify(obj, null, 2);
-  $('log').textContent = line + '\n\n' + $('log').textContent;
+// The action the provider round trip is being started FOR. Both ACCEPT and DECLINE prove identity
+// the same way on a provider account (IV-11 ②), so the choice only decides what the callback page
+// posts when it gets back — it changes nothing about the round trip itself.
+let ACTION = 'ACCEPT';
+
+function say(html, isErr){
+  $('actMsg').className = 'msg' + (isErr ? ' err' : ' muted');
+  $('actMsg').innerHTML = html;
+}
+
+function showRaw(obj){
+  $('actRaw').hidden = false;
+  $('actRaw').textContent = JSON.stringify(obj ?? {}, null, 2);
 }
 
 async function call(method, path, body){
-  const url = api() + BASE + path;
-  log(`${method} ${url}`, body);
+  const url = API + BASE + path;
   let res, text;
   try {
     res = await fetch(url, {
@@ -86,16 +88,15 @@ async function call(method, path, body){
     text = await res.text();
   } catch (e) {
     // The single most likely failure when this page is not on the API's origin.
-    log('NETWORK/CORS FAILURE — ' + e.message +
-        '\nThis page is cross-origin to the API. The browser blocks the response unless the ' +
-        'API returns Access-Control-Allow-Origin for this page origin (' + location.origin + ').');
-    throw e;
+    const err = new Error('Network or CORS failure — ' + e.message + '. This page origin is ' +
+      location.origin + '; the API must return Access-Control-Allow-Origin for it.');
+    err.network = true;
+    throw err;
   }
   let data = null;
   try { data = text ? JSON.parse(text) : null; } catch { data = text; }
-  log(`← ${res.status}`, data);
   if (!res.ok) {
-    const err = new Error((data && data.message) || res.status);
+    const err = new Error((data && data.message) || ('HTTP ' + res.status));
     err.payload = data; err.status = res.status;
     throw err;
   }
@@ -113,12 +114,12 @@ async function resolve() {
   } catch (e) {
     $('infoCard').hidden = false;
     $('info').innerHTML = '<dt>Result</dt><dd class="err">' +
-      (e.status ? e.status + ' · ' + ((e.payload && e.payload.errorType) || '') : 'request failed') + '</dd>';
+      (e.status ? e.status + ' · ' + ((e.payload && e.payload.errorType) || '') : e.message) + '</dd>';
     $('infoRaw').textContent = JSON.stringify(e.payload ?? {}, null, 2);
     return;
   }
   renderInfo();
-  renderAccept();
+  renderActions();
 }
 
 // Arriving from the invitation mail, the token is already in the URL and the origin is known, so
@@ -147,34 +148,83 @@ function renderInfo(){
   $('infoCard').hidden = false;
 }
 
-// ---- accept, shaped by accountState ----------------------------------------
+// ---- what may be offered, shaped by accountState ---------------------------
 // Provider only. The password path is deliberately absent: this page exists to exercise the
 // invitation round trip through Google / Microsoft, and offering a password box next to it
 // trains the invitee to type a password into a page they reached from a mailed link.
-function renderAccept(){
+function renderActions(){
   const st = INFO.accountState;
   const box = $('actBody');
   $('actCard').hidden = false;
+  say('');
 
   if (st === 'ACTIVE') {
     box.innerHTML = '<p class="muted">This account already holds live grants, so the link is <b>navigation only</b>. ' +
-      'Any action here is <code>409 / 1438 SIGN_IN_REQUIRED</code> by design — sign in normally and accept from ' +
+      'Any action here is <code>409 / 1438 SIGN_IN_REQUIRED</code> by design — sign in normally and act on it from ' +
       '<code>GET /v6/me/invitations</code> instead.</p>';
     return;
   }
 
-  const needNames = st === 'NONE';   // UM-3: names required only when the account is being created
+  // REVOKED with a password account: both ACCEPT and DECLINE need the password as their proof
+  // (ID-4), and offering a provider button here would only produce 403 / 1413 "wrong method".
+  if (st === 'REVOKED' && INFO.loginMethod === 'PASSWORD') {
+    box.innerHTML = '<p class="muted">This account’s one login method is <b>PASSWORD</b>. Both actions ' +
+      'prove identity with that password (ID-4), and this harness deliberately has no password box — ' +
+      'a page reached from a mailed link must not train anyone to type one. Exercise this case with a ' +
+      'direct <code>POST /invitations/{token}/action</code> carrying <code>password</code>.</p>';
+    return;
+  }
+
+  if (st === 'NONE') {
+    // Spec-confirmed, not a page limitation: the server refuses DECLINE before the account exists
+    // ("DECLINE is not available before the account exists", 400 / 1439). With no account there is
+    // no identity to prove, and the link is not a credential.
+    const n = derivedNames();
+    box.innerHTML = `
+      <p class="muted">The account is being created, so UM-3 makes <code>firstName</code> and
+      <code>lastName</code> mandatory — <code>user.first_name</code> / <code>last_name</code> are
+      <code>NOT NULL</code> and the invitation row carries no names. They are not typed here: the page
+      derives them from the invited address and sends
+      <code>${n.firstName}</code> / <code>${n.lastName}</code>.</p>
+      <div class="prov" id="prov"><span class="muted">loading providers…</span></div>
+      <p class="muted" style="margin-top:12px"><b>Decline is not offered here.</b> With no account there is
+      no identity to prove, so the server refuses it with <code>400 / 1439</code>. Ignoring the mail is the
+      decline — the IV-8 reaper purges the invitation at expiry.</p>`;
+    ACTION = 'ACCEPT';
+    loadProviders();
+    return;
+  }
+
+  // REVOKED with a provider account: accept and decline are both on offer, and both take the same
+  // round trip. The choice is made BEFORE the provider button, because it travels with the state.
   box.innerHTML = `
-    ${needNames ? `
-      <label>First name</label><input id="fn">
-      <label>Last name</label><input id="ln">
-      <hr>` : `<p class="muted">accountState is <b>REVOKED</b> — the account exists, so names are <b>rejected</b> here.</p>`}
-    <div class="prov" id="prov"><span class="muted">loading providers…</span></div>
-    ${st === 'NONE' ? '<p class="muted" style="margin-top:12px">DECLINE is deliberately <b>not offered</b> here: with no account there is no identity to prove, and the link is not a credential. Ignoring the mail is the decline — the reaper purges it at expiry.</p>'
-                    : '<div style="margin-top:12px"><button id="declineGo">Decline</button></div>'}
-  `;
+    <p class="muted">accountState is <b>REVOKED</b> — the account exists, so names are <b>rejected</b> here.
+    Both actions prove it is you through the provider first (IV-11 ②); the round trip is identical and
+    only the action posted on the way back differs.</p>
+    <div class="choice">
+      <button id="pickAccept" aria-pressed="true">Accept</button>
+      <button id="pickDecline" aria-pressed="false">Decline</button>
+    </div>
+    <p class="muted" id="choiceNote"></p>
+    <div class="prov" id="prov"><span class="muted">loading providers…</span></div>`;
+
+  const notes = {
+    ACCEPT: 'The invited grants activate and a session is returned (<code>200</code>). The user id, ' +
+            'the identity row and the audit history all survive untouched (ID-7).',
+    DECLINE: 'The invitation and its inert grants are <b>deleted</b> — there is no DECLINED status ' +
+             '(<code>204</code>, no body). The account itself stays revoked; nothing is activated.'
+  };
+  const pick = a => {
+    ACTION = a;
+    $('pickAccept').setAttribute('aria-pressed', String(a === 'ACCEPT'));
+    $('pickDecline').setAttribute('aria-pressed', String(a === 'DECLINE'));
+    $('choiceNote').innerHTML = notes[a];
+    say('');
+  };
+  $('pickAccept').onclick  = () => pick('ACCEPT');
+  $('pickDecline').onclick = () => pick('DECLINE');
+  pick('ACCEPT');
   loadProviders();
-  if ($('declineGo')) $('declineGo').onclick = () => act('DECLINE', {});
 }
 
 async function loadProviders(){
@@ -189,8 +239,9 @@ async function loadProviders(){
       b.onclick = () => startRoundTrip(p);
       $('prov').appendChild(b);
     }
-  } catch {
-    $('prov').innerHTML = '<span class="err">Could not load providers — see the log.</span>';
+  } catch (e) {
+    $('prov').innerHTML = '<span class="err">Could not load providers.</span>';
+    say(e.message, true);
   }
 }
 
@@ -199,38 +250,50 @@ async function loadProviders(){
 // into the invitation mail: it would be dead before most people opened it.
 async function startRoundTrip(provider){
   const names = collectNames();
-  if (names === null) return;
   try {
     const r = await call('POST', '/oauth2/authorizations', {
       providerId: provider.id,
       purpose: 'INVITATION',
       invitationToken: TOKEN
     });
-    // The callback page needs to know which invitation this state belongs to.
+    // The callback page needs to know which invitation this state belongs to, and WHICH ACTION the
+    // person chose: the state proves the round trip was authorised for this invitation, it does not
+    // record whether they meant to accept or decline.
     sessionStorage.setItem('optim.pending', JSON.stringify({
+      purpose: 'INVITATION', action: ACTION,
       api: API, token: TOKEN, state: r.state,
       accountState: INFO.accountState, ...names
     }));
-    log('state minted, expiresIn=' + r.expiresIn + 's → navigating to the provider');
+    say('State minted, expires in ' + r.expiresIn + 's — sending you to the provider to ' +
+        ACTION.toLowerCase() + '…');
     location.href = r.authorizationUrl;
-  } catch { /* logged */ }
+  } catch (e) {
+    say(e.status ? e.status + ' · ' + ((e.payload && e.payload.errorType) || e.message) : e.message, true);
+    if (e.payload) showRaw(e.payload);
+  }
+}
+
+/**
+ * UM-3 names for the account-creation path, derived rather than typed.
+ *
+ * <p>They cannot simply be dropped from the request: {@code createAccountViaLink} refuses a body
+ * without them with {@code 400 / 1439}, because {@code user.first_name} and {@code user.last_name}
+ * are {@code NOT NULL} columns and the {@code invitation} row holds no names to fall back on. The
+ * provider profile is not consulted for them either — the server reads the body and nothing else.
+ * So the harness stops ASKING for them and keeps SENDING them.
+ */
+function derivedNames(){
+  const local = String(INFO.email || '').split('@')[0] || 'optim';
+  const parts = local.split(/[._-]+/).filter(Boolean);
+  const cap = w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase();
+  return {
+    firstName: cap(parts[0] || 'Optim'),
+    lastName:  cap(parts.slice(1).join(' ') || 'Invitee')
+  };
 }
 
 function collectNames(){
-  if (INFO.accountState !== 'NONE') return {};
-  const fn = $('fn').value.trim(), ln = $('ln').value.trim();
-  if (!fn || !ln) { log('First and last name are required when accountState is NONE (UM-3).'); return null; }
-  return { firstName: fn, lastName: ln };
-}
-
-async function act(action, body){
-  try {
-    const r = await call('POST', `/invitations/${encodeURIComponent(TOKEN)}/action`,
-                         { action, ...body });
-    log(action + ' succeeded.', r);
-    $('actBody').innerHTML = '<p class="muted">Done — see the log for the response.</p><pre>' +
-      JSON.stringify(r ?? {}, null, 2) + '</pre>';
-  } catch { /* logged */ }
+  return INFO.accountState === 'NONE' ? derivedNames() : {};
 }
 </script>
 </body>

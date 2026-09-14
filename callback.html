@@ -18,7 +18,8 @@
   .row{display:grid;grid-template-columns:130px 1fr;gap:6px 14px;font-size:14px}
   .row dt{color:var(--mut);font-size:13px} .row dd{margin:0;word-break:break-all}
   .ok{color:var(--ok)} .err{color:var(--err)} .muted{color:var(--mut);font-size:13px}
-  .log{font:12px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;word-break:break-word}
+  button{padding:10px 16px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--fg);font:inherit;font-size:14px;cursor:pointer}
+  button:hover{border-color:var(--mut)}
   a{color:inherit}
 </style>
 </head>
@@ -38,11 +39,6 @@
     <pre id="raw" hidden></pre>
   </div>
 
-  <div class="card">
-    <h2>Log</h2>
-    <div class="log" id="log"></div>
-  </div>
-
   <p class="muted"><a href="./index.html">← back to the landing page</a></p>
 </div>
 
@@ -52,17 +48,13 @@ const BASE = '/actiontec/api/unauth/platform/v6';
 // A sign-in round trip stashes nothing, so this page needs its own default origin.
 const API  = 'https://event.optimportal.com';
 
-function log(msg, obj){
-  const t = new Date().toISOString().slice(11,19);
-  let line = `[${t}] ${msg}`;
-  if (obj !== undefined) line += '\n' + JSON.stringify(obj, null, 2);
-  $('log').textContent = line + '\n\n' + $('log').textContent;
-}
-
 const qs    = new URLSearchParams(location.search);
 const code  = qs.get('code');
 const state = qs.get('state');
 const perr  = qs.get('error');
+
+function fail(html){ $('result').innerHTML = '<span class="err">' + html + '</span>'; }
+function showRaw(obj){ $('raw').hidden = false; $('raw').textContent = JSON.stringify(obj ?? {}, null, 2); }
 
 $('params').innerHTML = [
   ['code',  code  ? code.slice(0, 12) + '…' : '<span class="err">absent</span>'],
@@ -70,11 +62,21 @@ $('params').innerHTML = [
   ['error', perr ? '<span class="err">' + perr + '</span>' : '—']
 ].map(([k,v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('');
 
-// The landing page stashed which invitation this round trip belongs to. The state
-// alone does not tell the CLIENT that — the server knows, but the client must send
-// the action to the right token.
+// The landing page stashed which invitation this round trip belongs to, and which action was
+// chosen. The state alone tells the CLIENT neither — the server knows the purpose it minted the
+// state for, but it does not know whether the person meant to accept or decline, and the client
+// must send the action to the right token.
 let pending = null;
 try { pending = JSON.parse(sessionStorage.getItem('optim.pending') || 'null'); } catch {}
+
+/** POST, tolerating a 204 with no body — which is exactly what DECLINE answers. */
+async function post(url, body){
+  const res  = await fetch(url, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+  const text = await res.text();
+  let data = null;
+  try { data = text ? JSON.parse(text) : null; } catch { data = text; }
+  return { res, data };
+}
 
 /**
  * PROVIDER_CODE sign-in — the ordinary way a provider account gets a session.
@@ -85,27 +87,19 @@ try { pending = JSON.parse(sessionStorage.getItem('optim.pending') || 'null'); }
  */
 async function signIn(){
   const api = (pending && pending.api) || API;
-  const url = api + '/actiontec/api/unauth/platform/v6/sessions';
-  const body = { method: 'PROVIDER_CODE', state, code };
-  log('POST ' + url, body);
-  let res, text;
+  const url = api + BASE + '/sessions';
+  let out;
   try {
-    res  = await fetch(url, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
-    text = await res.text();
+    out = await post(url, { method: 'PROVIDER_CODE', state, code });
   } catch (e) {
-    log('NETWORK/CORS FAILURE — ' + e.message);
-    $('result').innerHTML = '<span class="err">Network or CORS failure — see the log.</span>';
+    fail('Network or CORS failure — ' + e.message + '. This page origin is ' + location.origin + '.');
     return;
   }
-  let data = null;
-  try { data = text ? JSON.parse(text) : null; } catch { data = text; }
-  log('\u2190 ' + res.status, data);
-  $('raw').hidden = false;
-  $('raw').textContent = JSON.stringify(data ?? {}, null, 2);
+  const { res, data } = out;
+  showRaw(data);
 
   if (!res.ok || !data || !data.accessToken) {
-    const t = (data && (data.errorType || data.message)) || res.status;
-    $('result').innerHTML = '<span class="err">Sign-in refused: ' + res.status + ' \u00b7 ' + t + '</span>';
+    fail('Sign-in refused: ' + res.status + ' · ' + ((data && (data.errorType || data.message)) || res.status));
     return;
   }
   sessionStorage.removeItem('optim.pending');
@@ -113,28 +107,25 @@ async function signIn(){
               (data.actIsp ? (data.actIsp.displayName || data.actIsp.name) : '?');
   $('result').innerHTML =
     '<span class="ok"><b>Signed in.</b></span> <span class="muted">' + ctx + '</span>' +
-    '<p class="muted" style="margin-top:12px">Paste this into Postman\u2019s <code>accessToken</code> ' +
-    'collection variable, or into the portal\u2019s <code>localStorage.accessToken</code>. ' +
+    '<p class="muted" style="margin-top:12px">Paste this into Postman’s <code>accessToken</code> ' +
+    'collection variable, or into the portal’s <code>localStorage.accessToken</code>. ' +
     'The header is <code>X-Authorization: Bearer &lt;token&gt;</code>.</p>' +
     '<textarea id="tok" readonly style="width:100%;height:110px;font:12px/1.5 ui-monospace,Menlo,monospace">' +
     data.accessToken + '</textarea>' +
     '<div style="margin-top:8px"><button id="copy">Copy token</button></div>';
   $('copy').onclick = () => {
     $('tok').select();
-    navigator.clipboard.writeText(data.accessToken).then(
-      () => log('token copied to the clipboard'),
-      () => log('clipboard refused \u2014 select the box and copy by hand'));
+    navigator.clipboard.writeText(data.accessToken);
   };
 }
 
 async function run(){
   if (perr) {
-    $('result').innerHTML = '<span class="err">The provider refused: ' + perr + '</span>';
-    log('provider returned error=' + perr + ' — nothing sent to the API.');
+    fail('The provider refused: ' + perr + ' — nothing was sent to the API.');
     return;
   }
   if (!code || !state) {
-    $('result').innerHTML = '<span class="err">Missing <code>code</code> or <code>state</code> — nothing to exchange.</span>';
+    fail('Missing <code>code</code> or <code>state</code> — nothing to redeem.');
     return;
   }
   // Two round trips land here, and the client is the only one that has to tell them apart:
@@ -146,60 +137,78 @@ async function run(){
   }
   if (pending.state && pending.state !== state) {
     // Not the security check — the server enforces that. This only catches a stale tab.
-    log('WARNING: returned state does not match the one this tab minted. Continuing anyway; ' +
-        'the server will refuse it with 1421/1472 if it is genuinely wrong.');
+    $('result').innerHTML = '<span class="muted">Note: the returned state is not the one this tab ' +
+      'minted (stale tab?). Continuing — the server refuses it with 1421/1472 if it is genuinely wrong.</span>';
   }
 
-  const body = { action: 'ACCEPT', state, code };
-  // UM-3: names are required only where the account is being created.
-  if (pending.accountState === 'NONE') {
+  // ACCEPT and DECLINE are the same round trip and the same proof (IV-11 ②). Only the action
+  // differs, and for a provider account BOTH need the code and the state: declining a revoked
+  // account still has to prove who is knocking, or a mailed link alone could delete somebody
+  // else's invitation.
+  const action = pending.action === 'DECLINE' ? 'DECLINE' : 'ACCEPT';
+  const body = { action, state, code };
+
+  // UM-3: names are required only where the account is being created, and never on a DECLINE —
+  // which cannot reach the account-creation branch at all (the server refuses DECLINE while
+  // accountState is NONE).
+  if (action === 'ACCEPT' && pending.accountState === 'NONE') {
     body.firstName = pending.firstName;
     body.lastName  = pending.lastName;
   }
 
   const url = pending.api + BASE + '/invitations/' + encodeURIComponent(pending.token) + '/action';
-  log('POST ' + url, body);
-  let res, text;
+  let out;
   try {
-    res  = await fetch(url, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
-    text = await res.text();
+    out = await post(url, body);
   } catch (e) {
-    log('NETWORK/CORS FAILURE — ' + e.message +
-        '\nThis page origin is ' + location.origin + '; the API must allow it via Access-Control-Allow-Origin.');
-    $('result').innerHTML = '<span class="err">Network or CORS failure — see the log.</span>';
+    fail('Network or CORS failure — ' + e.message +
+         '. This page origin is ' + location.origin + '; the API must allow it via Access-Control-Allow-Origin.');
     return;
   }
-  let data = null;
-  try { data = text ? JSON.parse(text) : null; } catch { data = text; }
-  log('← ' + res.status, data);
-  $('raw').hidden = false;
-  $('raw').textContent = JSON.stringify(data ?? {}, null, 2);
+  const { res, data } = out;
+  if (data !== null) showRaw(data);
 
-  if (res.ok) {
-    sessionStorage.removeItem('optim.pending');
-    const grants = (data && data.grants) || [];
-    $('result').innerHTML = '<span class="ok"><b>Accepted.</b></span> ' +
-      (data && data.accessToken ? 'A session was returned (accessToken present).' : '') +
-      (grants.length ? '<p class="muted">Grants: ' + grants.map(g =>
-          (g.isp && (g.isp.displayName || g.isp.name || g.isp.id)) + ' → ' +
-          (g.roles || []).map(r => r.displayName || r.name).join(', ')
-        ).join(' · ') + '</p>' : '');
-  } else {
-    const t = (data && (data.errorType || data.message)) || res.status;
-    $('result').innerHTML = '<span class="err">Refused: ' + res.status + ' · ' + t + '</span>' +
+  if (!res.ok) {
+    $('result').innerHTML =
+      '<span class="err">' + action + ' refused: ' + res.status + ' · ' +
+      ((data && (data.errorType || data.message)) || res.status) + '</span>' +
       hint(data && data.errorCode);
+    return;
   }
+
+  sessionStorage.removeItem('optim.pending');
+
+  if (action === 'DECLINE') {
+    // 204, no body. There is deliberately no DECLINED status: the invitation row and its inert
+    // grants are DELETED, so re-resolving the same link now answers 410 / 1433.
+    $('result').innerHTML = '<span class="ok"><b>Declined.</b></span> ' +
+      '<span class="muted">HTTP ' + res.status + ', no body — as specified.</span>' +
+      '<p class="muted">The invitation and its inert grants were deleted; there is no DECLINED status. ' +
+      'The account itself is untouched and stays revoked. Re-opening the same link now answers ' +
+      '<code>410 / 1433</code>, which is the check worth making next.</p>';
+    return;
+  }
+
+  const grants = (data && data.grants) || [];
+  $('result').innerHTML = '<span class="ok"><b>Accepted.</b></span> ' +
+    (data && data.accessToken ? 'A session was returned (accessToken present).' : '') +
+    (grants.length ? '<p class="muted">Grants: ' + grants.map(g =>
+        (g.isp && (g.isp.displayName || g.isp.name || g.isp.id)) + ' → ' +
+        (g.roles || []).map(r => r.displayName || r.name).join(', ')
+      ).join(' · ') + '</p>' : '');
 }
 
 // The refusals this flow actually produces, so a failure is diagnosable from the page.
 function hint(codeNum){
   const m = {
     1410:'The provider did not assert a verified email. Identity rests on email_verified (ID-2).',
-    1412:'The invitation expired before it was accepted. The fix is a resend, not a new grant.',
+    1412:'The invitation expired before it was acted on. The fix is a resend, not a new grant.',
+    1413:'The provider identity is not this account’s, or this account signs in the other way (ID-4).',
     1416:'The provider asserted a different address than the one invited. Deliberate — it is the takeover path this closes.',
-    1433:'Link unknown, revoked, or superseded by a resend — indistinguishable by design.',
-    1438:'The account already holds live grants: sign in and accept from /v6/me/invitations instead.',
-    1439:'The action body was not usable (missing or not ACCEPT/DECLINE).',
+    1417:'The identity proof did not verify.',
+    1433:'Link unknown, revoked, superseded by a resend — or already declined, since declining deletes it. Indistinguishable by design.',
+    1438:'The account already holds live grants: sign in and act on it from /v6/me/invitations instead.',
+    1439:'The action body was not usable — missing, not ACCEPT/DECLINE, or a DECLINE while accountState is NONE.',
     1472:'The state was unknown, expired, already consumed, or bound to a different purpose.'
   }[codeNum];
   return m ? '<p class="muted">' + m + '</p>' : '';
