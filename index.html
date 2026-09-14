@@ -179,9 +179,11 @@ function renderActions(){
       naming either is <code>400 / 1439</code>. The account holder changes them from their profile
       after signing in. A provider that asserts neither cannot create the account.</p>
       <div class="prov" id="prov"><span class="muted">loading providers…</span></div>
-      <p class="muted" style="margin-top:12px"><b>Decline is not offered here.</b> With no account there is
-      no identity to prove, so the server refuses it with <code>400 / 1439</code>. Ignoring the mail is the
-      decline — the IV-8 reaper purges the invitation at expiry.</p>`;
+      <p class="muted" style="margin-top:12px"><b>You may also decline</b>, on the callback page once the
+      provider has proved the mailbox (IV-11 &#9314;, 6.25.0). A decline carrying no proof is still
+      <code>400 / 1439</code> — the link is not a credential (IV-4) — and there is no password decline
+      here, since with no account there is no password to verify. Ignoring the mail also works: the IV-8
+      reaper purges the invitation at expiry.</p>`;
     loadProviders();
     return;
   }

@@ -133,7 +133,10 @@ async function signIn(){
  */
 function offerActions(){
   const st = pending.accountState;
-  const declinable = st === 'REVOKED';
+  // Both states can decline since 6.25.0 / TRS v2.13 (IV-11 ③): the round trip that just finished
+  // proves the invited mailbox, and that is the same proof accepting uses. What is still refused is
+  // a decline carrying NO proof — but this page always has the code and state, so it never sends one.
+  const declinable = st === 'REVOKED' || st === 'NONE';
 
   $('result').innerHTML =
     '<p class="muted">The provider sent you back with a usable <code>code</code>. ' +
@@ -142,22 +145,24 @@ function offerActions(){
       '<button id="doAccept" class="primary">Accept</button>' +
       (declinable ? '<button id="doDecline">Decline</button>' : '') +
     '</div>' +
-    '<p class="muted" id="note">' + (declinable
+    '<p class="muted" id="note">' + (st === 'REVOKED'
       ? 'Accepting activates the invited grants on the account that already exists; the user id, ' +
         'the identity row and the audit history survive untouched (ID-7).'
       : 'accountState is <b>' + st + '</b>, so accepting <b>creates the account</b> and activates ' +
         'the invited grants in one transaction — creation is acceptance. The names come from the ' +
-        'provider. <b>Decline is not offered</b>: with no account there is no identity to prove, ' +
-        'so the server refuses it with <code>400 / 1439</code>.') +
+        'provider.') +
     '</p>';
 
   $('doAccept').onclick = () => submit('ACCEPT');
   if (declinable) {
     const decline = $('doDecline');
     decline.onmouseenter = () => { $('note').innerHTML =
-      '<b>Declining deletes the invitation and its inert grants.</b> There is no DECLINED status, ' +
-      'so this cannot be undone — the link afterwards answers <code>410 / 1433</code> and only a ' +
-      'fresh invitation restores it. The account itself is untouched and stays revoked.'; };
+      '<b>Declining deletes the invitation' + (st === 'REVOKED' ? ' and its inert grants' : '') +
+      '.</b> There is no DECLINED status, so this cannot be undone — the link afterwards answers ' +
+      '<code>410 / 1433</code> and only a fresh invitation restores it. ' + (st === 'REVOKED'
+        ? 'The account itself is untouched and stays revoked.'
+        : 'No account is created, and none was ever needed: the round trip proved the mailbox, ' +
+          'which is all a decline has to establish (IV-11 \u2462).'); };
     // Two clicks, because the first is a choice and the second is a confirmation. The state is
     // single-use, so a mis-click here costs the whole round trip.
     let armed = false;
