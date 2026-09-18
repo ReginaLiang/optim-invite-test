@@ -17,6 +17,7 @@
   button{padding:10px 16px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--fg);font:inherit;font-size:14px;cursor:pointer}
   button:hover{border-color:var(--mut)}
   button.primary{background:var(--fg);color:var(--bg);border-color:var(--fg)}
+  button.danger{color:var(--err);border-color:var(--err)}
   button:disabled{opacity:.45;cursor:not-allowed}
   .prov{display:flex;gap:10px;flex-wrap:wrap;margin-top:6px}
   .prov button{display:flex;align-items:center;gap:8px;min-width:190px;justify-content:center}
@@ -26,8 +27,27 @@
   pre{background:var(--code);border:1px solid var(--line);border-radius:7px;padding:11px;overflow-x:auto;font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;margin:8px 0 0}
   .badge{display:inline-block;padding:2px 8px;border-radius:20px;font-size:12px;font-weight:600;border:1px solid}
   .b-none{color:var(--ok);border-color:var(--ok)} .b-rev{color:var(--warn);border-color:var(--warn)} .b-act{color:var(--err);border-color:var(--err)}
-  .err{color:var(--err)} .muted{color:var(--mut);font-size:13px}
+  .err{color:var(--err)} .ok{color:var(--ok)} .muted{color:var(--mut);font-size:13px}
   .msg{font-size:13px;margin-top:12px;min-height:1em}
+  /* The two proof paths are separate blocks, never one form with a provider button bolted on:
+     which one applies is decided by accountState + loginMethod, and mixing them on screen is how
+     a tester ends up sending a password body to a provider account and reading 1413 as a bug. */
+  .panel{border:1px solid var(--line);border-radius:9px;padding:14px 15px;margin-top:14px}
+  .panel:first-child{margin-top:0}
+  .panel h3{font-size:13px;margin:0 0 6px;font-weight:600;display:flex;align-items:center;gap:8px}
+  .panel h3 .tag{font-weight:500;font-size:11px;color:var(--mut);border:1px solid var(--line);border-radius:20px;padding:1px 7px;text-transform:uppercase;letter-spacing:.05em}
+  .sep{display:flex;align-items:center;gap:10px;color:var(--mut);font-size:12px;margin:16px 0 2px;text-transform:uppercase;letter-spacing:.07em}
+  .sep::before,.sep::after{content:"";flex:1;height:1px;background:var(--line)}
+  .field{margin-top:10px}
+  .field label{display:block;font-size:12px;color:var(--mut);margin-bottom:4px}
+  .field input{width:100%;padding:9px 11px;border:1px solid var(--line);border-radius:7px;background:var(--bg);color:var(--fg);font:inherit;font-size:14px}
+  .field input:focus{outline:none;border-color:var(--mut)}
+  .field input[readonly]{color:var(--mut)}
+  .two{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  @media (max-width:520px){.two{grid-template-columns:1fr}}
+  .acts{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px}
+  .hint{font-size:12px;color:var(--mut);margin-top:6px}
+  .hint.bad{color:var(--err)}
 </style>
 </head>
 <body>
@@ -59,8 +79,15 @@ const API  = 'https://event.optimportal.com';
 const BASE = '/actiontec/api/unauth/platform/v6';
 let INFO = null;
 
-function say(html, isErr){
-  $('actMsg').className = 'msg' + (isErr ? ' err' : ' muted');
+// The platform's one password policy, mirrored from ApplicationConstants.PASSWORD_PATTERN via the
+// contract (InvitationLinkActionRequest.yaml, 6.24.0): 10-64 chars, one lowercase, one uppercase,
+// one digit, one special. Checked here ONLY to spare a round trip — the server is the authority
+// and answers 400 / 1474 PASSWORD_POLICY_VIOLATION, which this page shows unedited when it comes.
+const PW_RULE = /^(?=.*\d)(?=.*[a-z])(?=.*[A-Z])(?=.*[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]).{10,64}$/;
+const PW_HINT = '10–64 characters, with at least one lowercase letter, one uppercase letter, one digit and one special character.';
+
+function say(html, cls){
+  $('actMsg').className = 'msg ' + (cls || 'muted');
   $('actMsg').innerHTML = html;
 }
 
@@ -96,6 +123,11 @@ async function call(method, path, body){
   return data;
 }
 
+function refused(e){
+  say(e.status ? e.status + ' · ' + ((e.payload && e.payload.errorType) || e.message) : e.message, 'err');
+  if (e.payload) showRaw(e.payload);
+}
+
 // ---- the token comes from the mail link, and from nowhere else --------------
 const TOKEN = (new URLSearchParams(location.search).get('token') || '').trim();
 
@@ -116,7 +148,7 @@ async function resolve() {
 }
 
 // Arriving from the invitation mail, the token is already in the URL and the origin is known, so
-// there is nothing to ask for: resolve immediately and land the invitee on the provider picker.
+// there is nothing to ask for: resolve immediately and land the invitee on the choice of paths.
 if (TOKEN) {
   resolve();
 } else {
@@ -141,63 +173,230 @@ function renderInfo(){
   $('infoCard').hidden = false;
 }
 
-// ---- what may be offered, shaped by accountState ---------------------------
-// Provider only. The password path is deliberately absent: this page exists to exercise the
-// invitation round trip through Google / Microsoft, and offering a password box next to it
-// trains the invitee to type a password into a page they reached from a mailed link.
+// ---- small DOM helpers -----------------------------------------------------
+function el(tag, cls, html){
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (html != null) n.innerHTML = html;
+  return n;
+}
+
+function panel(tag, title, intro){
+  const p = el('div', 'panel');
+  p.appendChild(el('h3', null, `<span class="tag">${tag}</span><span>${title}</span>`));
+  if (intro) p.appendChild(el('p', 'muted', intro));
+  return p;
+}
+
+// email_asserted is stored as the inviter TYPED it (UM-4), so it reaches this page unnormalised
+// and goes straight into an attribute. Escape it rather than trusting the address format.
+function attr(v){
+  return String(v ?? '').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function field(id, label, type, extra){
+  const f = el('div', 'field');
+  f.innerHTML = `<label for="${id}">${label}</label>` +
+    `<input id="${id}" type="${type}"${extra || ''}>`;
+  return f;
+}
+
+function separator(text){
+  return el('div', 'sep', `<span>${text}</span>`);
+}
+
+function busy(on, within){
+  within.querySelectorAll('button').forEach(b => { b.disabled = on; });
+}
+
+// ---- what may be offered, shaped by accountState + loginMethod --------------
+//
+// Two proof paths, rendered as two separate panels and never interleaved (ID-4: an account holds
+// exactly ONE login method, so at most one of them can succeed for any given link):
+//
+//   password  — NONE:    { action:"ACCEPT", firstName, lastName, password }  creates the account
+//               REVOKED: { action:"ACCEPT"|"DECLINE", password }             proves the existing one
+//   provider  — both:    { action, state, code } after the round trip        (callback.html posts it)
+//
+// The password box used to be deliberately absent here on the grounds that a page reached from a
+// mailed link should not train anyone to type a password into it. That reasoning is about the
+// CLIENT'S landing page and still holds for it; this is a manual test harness, and UC-02's password
+// path (OC-11268) and UC-04's REVOKED password proof are otherwise only exercisable with a hand-
+// rolled curl. The panels are labelled so nobody mistakes this for the product surface.
 function renderActions(){
   const st = INFO.accountState;
   const box = $('actBody');
+  box.innerHTML = '';
   $('actCard').hidden = false;
+  $('actRaw').hidden = true;
   say('');
 
   if (st === 'ACTIVE') {
-    box.innerHTML = '<p class="muted">This account already holds live grants, so the link is <b>navigation only</b>. ' +
+    box.appendChild(el('p', 'muted',
+      'This account already holds live grants, so the link is <b>navigation only</b>. ' +
       'Any action here is <code>409 / 1438 SIGN_IN_REQUIRED</code> by design — sign in normally and act on it from ' +
-      '<code>GET /v6/me/invitations</code> instead.</p>';
-    return;
-  }
-
-  // REVOKED with a password account: both ACCEPT and DECLINE need the password as their proof
-  // (ID-4), and offering a provider button here would only produce 403 / 1413 "wrong method".
-  if (st === 'REVOKED' && INFO.loginMethod === 'PASSWORD') {
-    box.innerHTML = '<p class="muted">This account’s one login method is <b>PASSWORD</b>. Both actions ' +
-      'prove identity with that password (ID-4), and this harness deliberately has no password box — ' +
-      'a page reached from a mailed link must not train anyone to type one. Exercise this case with a ' +
-      'direct <code>POST /invitations/{token}/action</code> carrying <code>password</code>.</p>';
+      '<code>GET /v6/me/invitations</code> instead.'));
     return;
   }
 
   if (st === 'NONE') {
-    // Spec-confirmed, not a page limitation: the server refuses DECLINE before the account exists
-    // ("DECLINE is not available before the account exists", 400 / 1439). With no account there is
-    // no identity to prove, and the link is not a credential.
-    box.innerHTML = `
-      <p class="muted">No name is asked for and none may be sent. The server writes
-      <code>firstName</code> / <code>lastName</code> from the provider's assertion
-      (<code>given_name</code> / <code>family_name</code>) — UM-3 as amended by TRS v2.12 — and a body
-      naming either is <code>400 / 1439</code>. The account holder changes them from their profile
-      after signing in. A provider that asserts neither cannot create the account.</p>
-      <div class="prov" id="prov"><span class="muted">loading providers…</span></div>
-      <p class="muted" style="margin-top:12px"><b>You may also decline</b>, on the callback page once the
-      provider has proved the mailbox (IV-11 &#9314;, 6.25.0). A decline carrying no proof is still
-      <code>400 / 1439</code> — the link is not a credential (IV-4) — and there is no password decline
-      here, since with no account there is no password to verify. Ignoring the mail also works: the IV-8
-      reaper purges the invitation at expiry.</p>`;
+    box.appendChild(nonePasswordPanel());
+    box.appendChild(separator('or'));
+    box.appendChild(noneProviderPanel());
     loadProviders();
     return;
   }
 
-  // REVOKED with a provider account: both actions are on offer and both take the SAME round trip,
-  // so there is nothing to choose here. The choice is made on the callback page, after the provider
-  // has proved who is knocking and immediately before the act itself — which matters because
-  // declining deletes the invitation and cannot be undone.
-  box.innerHTML = `
-    <p class="muted">accountState is <b>REVOKED</b> — the account exists, so names are <b>rejected</b> here.
-    Accepting and declining prove it is you the same way, through the provider (IV-11 ②); only the action
-    posted on the way back differs. <b>You choose which on the callback page</b>, once you are back.</p>
-    <div class="prov" id="prov"><span class="muted">loading providers…</span></div>`;
+  // REVOKED. The account exists and ID-4 fixed its one method at creation, so exactly one of the
+  // two panels is applicable — offering the other would only ever produce 403 / 1413 "wrong
+  // method". The resolve response already says which, so the page shows the one that can work and
+  // names the other as refused rather than hiding it silently.
+  if (INFO.loginMethod === 'PASSWORD') {
+    box.appendChild(revokedPasswordPanel());
+    box.appendChild(separator('not available'));
+    box.appendChild(panel('provider', 'Not this account&rsquo;s method',
+      'Its one login method is <b>PASSWORD</b> (ID-4, fixed at creation and not changeable). A provider ' +
+      'body here is <code>403 / 1413</code>.'));
+    return;
+  }
+
+  box.appendChild(revokedProviderPanel());
+  box.appendChild(separator('not available'));
+  box.appendChild(panel('password', 'Not this account&rsquo;s method',
+    'Its one login method is a <b>provider</b> (ID-4, fixed at creation and not changeable). It has no ' +
+    'password at all, so a password body here is <code>403 / 1413</code>.'));
   loadProviders();
+}
+
+// ---- NONE · password: create the account ------------------------------------
+function nonePasswordPanel(){
+  const p = panel('password', 'Create the account with a password',
+    'Creation <b>is</b> acceptance (IV-5 &#9312;): the account, its <code>LOCAL</code> identity and this ' +
+    'invitation&rsquo;s grants are written in one transaction and the response is a session — there is no second ' +
+    'sign-in. The choice is <b>permanent</b> (ID-4): this account can never afterwards sign in with a provider. ' +
+    'The address is not typed in — it is the invited one, and the link arriving at that mailbox is what proves it ' +
+    '(IV-4, <code>email_verified_by = INVITATION</code>).');
+
+  p.appendChild(field('pwEmail', 'Address (from the invitation — not an input)', 'text', ` value="${attr(INFO.email)}" readonly`));
+  const two = el('div', 'two');
+  two.appendChild(field('pwFirst', 'First name', 'text', ' autocomplete="given-name"'));
+  two.appendChild(field('pwLast', 'Last name', 'text', ' autocomplete="family-name"'));
+  p.appendChild(two);
+  p.appendChild(el('p', 'hint', 'Both are <b>required</b> on this path and are the only source — there is no assertion to read them from. On the provider path the opposite holds and a body naming either is <code>400 / 1439</code> (UM-3, TRS v2.12).'));
+  p.appendChild(field('pwNew', 'Password', 'password', ' autocomplete="new-password"'));
+  p.appendChild(field('pwConfirm', 'Confirm password', 'password', ' autocomplete="new-password"'));
+  p.appendChild(el('p', 'hint', PW_HINT + ' The server is the authority — a failure is <code>400 / 1474</code>.'));
+
+  const acts = el('div', 'acts');
+  const go = el('button', 'primary', 'Create account &amp; accept');
+  go.onclick = () => createWithPassword(p);
+  acts.appendChild(go);
+  p.appendChild(acts);
+
+  p.appendChild(el('p', 'hint', '<b>There is no password decline.</b> With no account there is no password to verify, so ignoring the mail is the decline and the IV-8 reaper purges the invitation at expiry. Declining actively needs the provider round trip (IV-11 &#9314;).'));
+  return p;
+}
+
+async function createWithPassword(p){
+  const firstName = $('pwFirst').value.trim();
+  const lastName  = $('pwLast').value.trim();
+  const password  = $('pwNew').value;
+  const confirm   = $('pwConfirm').value;
+
+  if (!firstName || !lastName) { say('firstName and lastName are required on the password path — the server answers <code>400 / 1439</code> without them.', 'err'); return; }
+  if (password !== confirm)    { say('The two passwords do not match. This check is the page&rsquo;s own — the server never sees the confirmation.', 'err'); return; }
+  if (!PW_RULE.test(password)) { say('Password does not meet the platform policy. ' + PW_HINT, 'err'); return; }
+
+  busy(true, p);
+  say('Creating the account…');
+  try {
+    const r = await call('POST', `/invitations/${encodeURIComponent(TOKEN)}/action`,
+      { action: 'ACCEPT', firstName, lastName, password });
+    accepted(r, 'Account created and the invitation accepted — one transaction, and this is the session it returned.');
+  } catch (e) {
+    refused(e);
+  } finally {
+    busy(false, p);
+  }
+}
+
+// ---- REVOKED · password: prove the existing credential ----------------------
+function revokedPasswordPanel(){
+  const p = panel('password', 'Prove it is you, with the account&rsquo;s existing password',
+    'The account exists and holds <b>zero activated grants</b>, so it cannot sign in (ID-6) and reaches this ' +
+    'choice through the link instead (IV-11 &#9313;). Nothing is created and nothing is renamed: the user id, the ' +
+    'identity row and the audit history survive untouched (ID-7), and a body carrying a name is ' +
+    '<code>400 / 1439</code>.');
+
+  p.appendChild(field('rvEmail', 'Address (from the invitation — not an input)', 'text', ` value="${attr(INFO.email)}" readonly`));
+  p.appendChild(field('rvPw', 'Existing password', 'password', ' autocomplete="current-password"'));
+  p.appendChild(el('p', 'hint', 'No policy check here and no length bounds — this <b>verifies</b> a stored credential rather than setting a new one, so a password predating the current policy must still work. A password that does not verify is <code>403 / 1417</code>, distinct from <code>1413</code>, which would be telling you to use a method this account does not have.'));
+
+  const acts = el('div', 'acts');
+  const acc = el('button', 'primary', 'Accept');
+  acc.onclick = () => proveWithPassword(p, 'ACCEPT');
+  const dec = el('button', 'danger', 'Decline');
+  dec.onclick = () => proveWithPassword(p, 'DECLINE');
+  acts.appendChild(acc); acts.appendChild(dec);
+  p.appendChild(acts);
+
+  p.appendChild(el('p', 'hint', '<b>Declining is irreversible and deletes the invitation</b> together with its inert grants; the link then answers <code>410 / 1433</code>. The account itself is untouched and stays revoked, and the same scope may invite the address again (IV-10).'));
+  return p;
+}
+
+async function proveWithPassword(p, action){
+  const password = $('rvPw').value;
+  if (!password) { say('The password is the proof on this path — the server answers <code>400 / 1439</code> without it.', 'err'); return; }
+  if (action === 'DECLINE' && !confirm(
+      'Decline this invitation?\n\nThe invitation and its inert grants are deleted and the link stops working. ' +
+      'The account itself is untouched and stays revoked.')) return;
+
+  busy(true, p);
+  say(action === 'ACCEPT' ? 'Proving identity and activating the grants…' : 'Proving identity and declining…');
+  try {
+    const r = await call('POST', `/invitations/${encodeURIComponent(TOKEN)}/action`, { action, password });
+    if (action === 'ACCEPT') {
+      accepted(r, 'Accepted — the grants are active on the account that already existed, and this is the session it returned.');
+    } else {
+      say('Declined · <code>204</code>. The invitation and its inert grants are gone; the link now answers <code>410 / 1433</code>.', 'ok');
+      $('actRaw').hidden = true;
+    }
+  } catch (e) {
+    refused(e);
+  } finally {
+    busy(false, p);
+  }
+}
+
+function accepted(session, line){
+  say(line, 'ok');
+  showRaw(session);
+}
+
+// ---- provider panels --------------------------------------------------------
+function noneProviderPanel(){
+  const p = panel('provider', 'Create the account with a provider',
+    'The same one-transaction creation, with the provider&rsquo;s assertion as the proof instead of the mailbox. ' +
+    'No name is asked for and none may be sent: the server writes <code>firstName</code> / <code>lastName</code> ' +
+    'from <code>given_name</code> / <code>family_name</code> (UM-3 as amended by TRS v2.12) and a body naming ' +
+    'either is <code>400 / 1439</code>. A provider that asserts neither cannot create the account.');
+  const slot = el('div', 'prov', '<span class="muted">loading providers…</span>');
+  slot.id = 'prov';
+  p.appendChild(slot);
+  p.appendChild(el('p', 'hint', '<b>You may also decline here</b>, on the callback page once the provider has proved the mailbox (IV-11 &#9314;, 6.25.0). A decline carrying no proof is still <code>400 / 1439</code> — the link is not a credential (IV-4).'));
+  return p;
+}
+
+function revokedProviderPanel(){
+  const p = panel('provider', 'Prove it is you, at the provider',
+    'The account exists, so names are <b>rejected</b> here. Accepting and declining prove it is you the same way ' +
+    '(IV-11 &#9313;); only the action posted on the way back differs, and <b>you choose which on the callback ' +
+    'page</b> — which matters, because declining deletes the invitation and cannot be undone. It must be the ' +
+    'account&rsquo;s existing <code>(config, subject)</code>: a different provider is <code>403 / 1413</code>.');
+  const slot = el('div', 'prov', '<span class="muted">loading providers…</span>');
+  slot.id = 'prov';
+  p.appendChild(slot);
+  return p;
 }
 
 async function loadProviders(){
@@ -214,7 +413,7 @@ async function loadProviders(){
     }
   } catch (e) {
     $('prov').innerHTML = '<span class="err">Could not load providers.</span>';
-    say(e.message, true);
+    say(e.message, 'err');
   }
 }
 
@@ -240,12 +439,9 @@ async function startRoundTrip(provider){
     say('State minted, expires in ' + r.expiresIn + 's — sending you to the provider…');
     location.href = r.authorizationUrl;
   } catch (e) {
-    say(e.status ? e.status + ' · ' + ((e.payload && e.payload.errorType) || e.message) : e.message, true);
-    if (e.payload) showRaw(e.payload);
+    refused(e);
   }
 }
-
-
 </script>
 </body>
 </html>

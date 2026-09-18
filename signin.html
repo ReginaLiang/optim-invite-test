@@ -1,4 +1,4 @@
-<title>Optim6 sign-in — Google / Microsoft</title>
+<title>Optim6 sign-in — password / Google / Microsoft</title>
 <style>
   :root{--bg:#fbfbfa;--fg:#1c1b19;--mut:#6b6862;--line:#e0ddd7;--card:#fff;--ok:#1a7f4b;--warn:#8a5a00;--err:#a02020;--code:#f4f2ee}
   @media (prefers-color-scheme:dark){:root:not([data-theme=light]){--bg:#191817;--fg:#e8e6e1;--mut:#9a958c;--line:#33312e;--card:#211f1d;--ok:#5fbf8a;--warn:#d0a04a;--err:#e07a7a;--code:#26241f}}
@@ -11,6 +11,7 @@
   .card h2{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--mut);margin:0 0 12px;font-weight:600}
   label{display:block;font-size:12px;color:var(--mut);margin:10px 0 4px}
   input{width:100%;padding:9px 10px;border:1px solid var(--line);border-radius:7px;background:var(--bg);color:var(--fg);font:inherit;font-size:14px}
+  input:focus{outline:none;border-color:var(--mut)}
   button{padding:10px 16px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--fg);font:inherit;font-size:14px;cursor:pointer}
   button:hover{border-color:var(--mut)}
   button.primary{background:var(--fg);color:var(--bg);border-color:var(--fg)}
@@ -23,16 +24,58 @@
   pre{background:var(--code);border:1px solid var(--line);border-radius:7px;padding:11px;overflow-x:auto;font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;margin:8px 0 0}
   .badge{display:inline-block;padding:2px 8px;border-radius:20px;font-size:12px;font-weight:600;border:1px solid}
   .b-none{color:var(--ok);border-color:var(--ok)} .b-rev{color:var(--warn);border-color:var(--warn)} .b-act{color:var(--err);border-color:var(--err)}
-  .err{color:var(--err)} .muted{color:var(--mut);font-size:13px}
+  .err{color:var(--err)} .ok{color:var(--ok)} .muted{color:var(--mut);font-size:13px}
   .log{font:12px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;word-break:break-word}
   hr{border:0;border-top:1px solid var(--line);margin:16px 0}
+  .two{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  @media (max-width:520px){.two{grid-template-columns:1fr}}
+  .acts{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px;align-items:center}
+  .hint{font-size:12px;color:var(--mut);margin-top:6px}
+  .sep{display:flex;align-items:center;gap:10px;color:var(--mut);font-size:12px;margin:0 0 16px;text-transform:uppercase;letter-spacing:.07em}
+  .sep::before,.sep::after{content:"";flex:1;height:1px;background:var(--line)}
+  textarea{width:100%;height:110px;font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;padding:9px 10px;border:1px solid var(--line);border-radius:7px;background:var(--bg);color:var(--fg)}
+  details summary{cursor:pointer;font-size:12px;color:var(--mut);margin-top:12px}
 </style>
 <div class="wrap">
   <h1>Optim6 sign-in</h1>
-  <div class="sub">The ordinary provider sign-in, outside the portal — for getting a token into Postman.</div>
+  <div class="sub">Sign in outside the portal — for getting a token into Postman. Both methods land on the same
+    <code>POST …/unauth/platform/v6/sessions</code>; they differ only in the proof they carry.</div>
+
+  <!-- Password and provider are separate cards, never one form with a provider button bolted on.
+       An account holds exactly ONE login method, fixed at creation (ID-4), so at most one of these
+       can work for any given address — presenting them as alternatives of one form suggests a
+       choice the account does not have. -->
+  <div class="card">
+    <h2>Sign in with a password</h2>
+    <p class="muted">One call, no round trip: <code>{ method: "PASSWORD", username, password }</code> and the
+      response <b>is</b> the session. This is the v6 replacement for <code>POST /v2/login</code> and
+      <code>POST /unauth/platform/v5/login</code>, which are frozen and deprecated.</p>
+    <label for="user">Username (the account's email address)</label>
+    <input id="user" type="text" autocomplete="username" autocapitalize="off" spellcheck="false">
+    <label for="pass">Password</label>
+    <input id="pass" type="password" autocomplete="current-password">
+
+    <details>
+      <summary>Optional: land in a specific context</summary>
+      <p class="hint">Both are optional and are validated as a <b>pair</b> (SW-2): an account granted
+        <code>admin</code> in ISP B and <code>engineer</code> in ISP A asking for <code>admin</code> in ISP A is
+        refused, even though each value appears in one of its grants. Left blank, the server elects the context.
+        <code>isp</code> is a compartment id; <code>*</code> is GLOBAL.</p>
+      <div class="two">
+        <div><label for="role">role — role id</label><input id="role" type="text" spellcheck="false"></div>
+        <div><label for="isp">isp — compartment id</label><input id="isp" type="text" spellcheck="false"></div>
+      </div>
+    </details>
+
+    <div class="acts"><button class="primary" id="pwGo">Sign in</button></div>
+    <div id="pwMsg" class="muted" style="margin-top:12px;min-height:1em"></div>
+    <div id="pwOut"></div>
+  </div>
+
+  <div class="sep"><span>or</span></div>
 
   <div class="card">
-    <h2>Choose a provider</h2>
+    <h2>Sign in with a provider</h2>
     <div class="prov" id="prov"><span class="muted">loading providers…</span></div>
     <p class="muted" style="margin-top:14px">
       The server builds the authorization URL and mints the <code>state</code>; this page never
@@ -55,9 +98,17 @@ function log(msg, obj){
   $('log').textContent = line + '\n\n' + $('log').textContent;
 }
 
+/** The password never reaches the log — the body is redacted before it is printed. */
+function redact(body){
+  if (!body || typeof body !== 'object') return body;
+  const copy = {...body};
+  if ('password' in copy) copy.password = '••••••••';
+  return copy;
+}
+
 async function call(method, path, body){
   const url = API + BASE + path;
-  log(method + ' ' + url, body);
+  log(method + ' ' + url, redact(body));
   const res = await fetch(url, {
     method,
     headers: body ? {'Content-Type':'application/json'} : undefined,
@@ -71,6 +122,93 @@ async function call(method, path, body){
   return data;
 }
 
+// ---- password sign-in -------------------------------------------------------
+//
+// Fully served today; the two provider methods on this same endpoint are not interchangeable with
+// it, since ID-4 fixes an account's one method at creation. A password presented for a provider
+// account is 401 / 1470 like any other credential that does not verify — it is NOT told apart,
+// deliberately: distinguishing them would make the endpoint an oracle for which accounts exist and
+// how they sign in.
+//
+// What a refusal means here (open-api-document 6.26.0):
+//   401 · 1470 INVALID_CREDENTIALS  unknown address, or wrong password — one code for both
+//   401 · 1471 ACCOUNT_LOCKED       answered ONLY once the password verified, so the lock is not
+//                                   an oracle for account existence. Administrative reset; there is
+//                                   no lockedUntil to report
+//   403 · 1411 NO_ACCESS            authenticated, but zero activated grants (ID-6) — no token
+//   403 · 1415 INVITATION_PENDING   same, except an invitation is waiting: use the link in the mail
+const PW_REFUSALS = {
+  1470: 'Unknown address or wrong password — one code for both, so this endpoint cannot be used to probe which accounts exist.',
+  1471: 'The account is locked by failed-attempt count. It is administrative — only an administrator resets it, and there is no automatic release to report.',
+  1411: 'Authenticated, but this account holds zero activated grants (ID-6). No token of any kind is issued and no user row was created.',
+  1415: 'Authenticated, and an invitation IS waiting — but this account-creating path needs the link from the invitation mail (IV-4). Open that link; index.html handles it.'
+};
+
+$('pwGo').onclick = signInWithPassword;
+for (const id of ['user','pass']) {
+  $(id).addEventListener('keydown', e => { if (e.key === 'Enter') signInWithPassword(); });
+}
+
+async function signInWithPassword(){
+  const username = $('user').value.trim();
+  const password = $('pass').value;
+  const role = $('role').value.trim();
+  const isp  = $('isp').value.trim();
+
+  $('pwOut').innerHTML = '';
+  if (!username || !password) { pwSay('username and password are both required — the server answers <code>400</code> without them.', 'err'); return; }
+
+  const body = { method: 'PASSWORD', username, password };
+  // Blank is absent, not an override of nothing: the server trims these and treats empty as unset,
+  // so sending "" would be indistinguishable from omitting them anyway. Omit them here too, so the
+  // logged body is the body.
+  if (role) body.role = role;
+  if (isp)  body.isp  = isp;
+
+  $('pwGo').disabled = true;
+  pwSay('Signing in…');
+  try {
+    const s = await call('POST', '/sessions', body);
+    if (!s || !s.accessToken) { pwSay('The call succeeded but carried no accessToken — see the log.', 'err'); return; }
+    $('pass').value = '';
+    pwSay('', 'muted');
+    showToken(s);
+  } catch (e) {
+    const p = e.payload || {};
+    const extra = PW_REFUSALS[p.errorCode];
+    pwSay('<b>Refused:</b> ' + e.status + ' · ' + (p.errorType || p.message || e.message) +
+          (extra ? '<br><span class="muted">' + extra + '</span>' : ''), 'err');
+  } finally {
+    $('pwGo').disabled = false;
+  }
+}
+
+function pwSay(html, cls){
+  $('pwMsg').className = cls === 'err' ? 'err' : 'muted';
+  $('pwMsg').style.marginTop = '12px';
+  $('pwMsg').innerHTML = html;
+}
+
+/** The same token panel the provider callback shows, so either path ends the same way. */
+function showToken(s){
+  const ctx = (s.actRole ? (s.actRole.displayName || s.actRole.name) : '?') + ' @ ' +
+              (s.actIsp  ? (s.actIsp.displayName  || s.actIsp.name)  : '?');
+  const out = $('pwOut');
+  out.innerHTML =
+    '<p><span class="ok"><b>Signed in.</b></span> <span class="muted">' + ctx +
+    (s.sid ? ' · sid ' + s.sid : '') + '</span></p>' +
+    '<p class="muted">Paste this into Postman&rsquo;s <code>accessToken</code> collection variable, or into the ' +
+    'portal&rsquo;s <code>localStorage.accessToken</code>. The header is ' +
+    '<code>X-Authorization: Bearer &lt;token&gt;</code>.</p>' +
+    '<textarea id="tok" readonly></textarea>' +
+    '<div class="acts"><button id="copy">Copy token</button>' +
+    '<span class="muted">Full response is in the log below.</span></div>';
+  // Assigned rather than interpolated: a JWT is opaque and must not be parsed as HTML on its way in.
+  $('tok').value = s.accessToken;
+  $('copy').onclick = () => { $('tok').select(); navigator.clipboard.writeText(s.accessToken); };
+}
+
+// ---- provider sign-in -------------------------------------------------------
 (async function loadProviders(){
   try {
     const list = (await call('GET', '/oauth2/providers')).data || [];
