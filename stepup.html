@@ -45,6 +45,8 @@
     <input id="isp" placeholder="isp id or *">
     <label>mode for the completion</label>
     <select id="mode"><option>REPLACE</option><option>FORK</option></select>
+    <label>max_age override (test tool; empty = the URL exactly as the server built it. Entra sets the id_token lifetime to auth_time + max_age, so 0 expires on arrival)</label>
+    <input id="maxage" placeholder="e.g. 300">
     <button id="go" class="primary">Initiate step-up → go to the provider</button>
     <div id="msg" class="muted" style="margin-top:12px"></div>
     <pre id="raw" hidden></pre>
@@ -96,8 +98,12 @@ $('go').onclick = async () => {
   // The callback page reads this to know that the code must be redeemed at SWITCH_CONTEXT, with
   // this token, and never at the sign-in route (which would burn the single-use state).
   sessionStorage.setItem('optim.pending', JSON.stringify({ purpose: 'STEP_UP', api, token, role, isp, mode, state: data.state }));
-  say('state minted (expiresIn=' + data.expiresIn + 's) — navigating to the provider; it must ask for the password again (prompt=login, max_age=0).', 'ok');
-  location.href = data.authorizationUrl;
+  let target = data.authorizationUrl;
+  const override = $('maxage').value.trim();
+  if (override) { const u = new URL(target); u.searchParams.set('max_age', override); target = u.toString(); }
+  say('state minted (expiresIn=' + data.expiresIn + 's) \u2014 navigating to the provider; it must ask for the password again (prompt=login' +
+      (override ? ', max_age=' + override + ' overridden' : ', max_age as issued') + ').', 'ok');
+  location.href = target;
 };
 </script>
 </body>
