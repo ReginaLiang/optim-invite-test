@@ -247,15 +247,20 @@ function offerStepUp(){
     '<p class="muted">The provider sent you back with a usable <code>code</code> for a <b>step-up</b>. ' +
     'Nothing has been submitted yet \u2014 the state is single-use, so it goes to <code>SWITCH_CONTEXT</code> exactly once.</p>' +
     '<dl class="row"><dt>code</dt><dd id="fullCode"></dd><dt>state</dt><dd id="fullState"></dd></dl>' +
+    '<p class="muted">Callback URL (copy this to complete the step-up from elsewhere, e.g. a script or Postman):</p>' +
+    '<textarea id="cbUrl" readonly style="width:100%;height:80px;font:12px/1.5 ui-monospace,Menlo,monospace"></textarea>' +
     '<div class="choice">' +
-      '<button id="doStepUp" class="primary">Complete the step-up here (' + (pending.mode || 'REPLACE') + ')</button>' +
-      '<button id="copyUrl">Copy callback URL</button>' +
+      '<button id="copyUrl" class="primary">Copy callback URL</button>' +
+      '<button id="doStepUp">Complete the step-up here (' + (pending.mode || 'REPLACE') + ')</button>' +
     '</div>' +
     '<p class="muted">Target: role <code>' + (pending.role || '(current)') + '</code>, isp <code>' + (pending.isp || '(current)') + '</code>.</p>';
   $('fullCode').textContent = code;
   $('fullState').textContent = state;
-  $('copyUrl').onclick = () => navigator.clipboard.writeText(cbUrl);
+  $('cbUrl').value = cbUrl;
+  $('copyUrl').onclick = () => { $('cbUrl').select(); navigator.clipboard.writeText(cbUrl); };
   $('doStepUp').onclick = async () => {
+    // The state is single-use: once this is sent nothing else can redeem the code.
+    if (!confirm('Send the code to SWITCH_CONTEXT now? The state is single-use \u2014 if you meant to copy the callback URL instead, choose Cancel.')) return;
     document.querySelectorAll('.choice button').forEach(b => { b.disabled = true; });
     const body = { action: 'SWITCH_CONTEXT', mode: pending.mode || 'REPLACE', stepUp: { code, state } };
     if (pending.role) body.role = pending.role;
