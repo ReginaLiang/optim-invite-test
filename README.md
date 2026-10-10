@@ -143,3 +143,7 @@ predating the current policy with a policy error rather than an authentication o
 - **No action at all when `accountState` is `ACTIVE`.** The link is navigation only — sign
   in and accept from `/v6/me/invitations`.
 - **They never hold a provider token.** The client sends `code`; the server exchanges it.
+
+## Step-up (UC-12 / SW-5)
+
+`stepup.html` starts the PROVIDER step-up round trip for a session that was refused `403 / 1408` with `stepUpMechanism: PROVIDER`: paste the calling session's accessToken and the target, it calls `INITIATE_STEP_UP`, stashes `purpose: STEP_UP` and sends you to the provider. `callback.html` then shows the code and state and completes the elevation with `SWITCH_CONTEXT + stepUp {code, state}` on that session — never through the sign-in route, which would consume the single-use state (1472 there, 1421 on the completion).

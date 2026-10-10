@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Optim6 step-up — PROVIDER round trip</title>
+<style>
+  :root{--bg:#fbfbfa;--fg:#1c1b19;--mut:#6b6862;--line:#e0ddd7;--card:#fff;--ok:#1a7f4b;--err:#a02020;--code:#f4f2ee}
+  @media (prefers-color-scheme:dark){:root:not([data-theme=light]){--bg:#191817;--fg:#e8e6e1;--mut:#9a958c;--line:#33312e;--card:#211f1d;--ok:#5fbf8a;--err:#e07a7a;--code:#26241f}}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif}
+  .wrap{max-width:760px;margin:0 auto;padding:32px 20px 64px}
+  h1{font-size:19px;margin:0 0 4px}
+  .sub{color:var(--mut);font-size:13px;margin-bottom:24px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:18px;margin-bottom:16px}
+  .card h2{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--mut);margin:0 0 12px;font-weight:600}
+  label{display:block;font-size:13px;color:var(--mut);margin:10px 0 4px}
+  input,textarea,select{width:100%;padding:9px 10px;border:1px solid var(--line);border-radius:7px;background:var(--code);color:var(--fg);font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace}
+  textarea{height:96px}
+  pre{background:var(--code);border:1px solid var(--line);border-radius:7px;padding:11px;overflow-x:auto;font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;margin:8px 0 0;white-space:pre-wrap;word-break:break-all}
+  .ok{color:var(--ok)} .err{color:var(--err)} .muted{color:var(--mut);font-size:13px}
+  button{padding:10px 16px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--fg);font:inherit;font-size:14px;cursor:pointer;margin-top:14px}
+  button.primary{background:var(--fg);color:var(--bg);border-color:var(--fg)}
+  button:disabled{opacity:.45;cursor:not-allowed}
+  a{color:inherit}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Optim6 step-up — PROVIDER round trip (UC-12 / SW-5)</h1>
+  <div class="sub">For a PROVIDER account that was refused <code>403 / 1408</code> with <code>stepUpMechanism: PROVIDER</code>.
+    This page asks the server to start the round trip (<code>INITIATE_STEP_UP</code>), remembers that the trip is a
+    <b>step-up</b>, and sends you to the provider. The callback page then completes it with
+    <code>SWITCH_CONTEXT + stepUp {code, state}</code> instead of signing in.</div>
+
+  <div class="card">
+    <h2>1 · The session that was refused</h2>
+    <label>API origin</label>
+    <input id="api" value="https://event.optimportal.com">
+    <label>accessToken of the calling session (the one that got 1408)</label>
+    <textarea id="tok" placeholder="eyJ…"></textarea>
+    <label>target role id (optional — omit to keep the current role)</label>
+    <input id="role" placeholder="role id">
+    <label>target isp id (optional — e.g. * to widen back to GLOBAL)</label>
+    <input id="isp" placeholder="isp id or *">
+    <label>mode for the completion</label>
+    <select id="mode"><option>REPLACE</option><option>FORK</option></select>
+    <button id="go" class="primary">Initiate step-up → go to the provider</button>
+    <div id="msg" class="muted" style="margin-top:12px"></div>
+    <pre id="raw" hidden></pre>
+  </div>
+
+  <p class="muted"><a href="./index.html">← back to the landing page</a></p>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const ACTION = '/actiontec/api/v6/me/sessions/current/action';
+
+function say(html, cls){ $('msg').className = cls === 'err' ? 'err' : (cls === 'ok' ? 'ok' : 'muted'); $('msg').innerHTML = html; }
+function showRaw(obj){ $('raw').hidden = false; $('raw').textContent = JSON.stringify(obj ?? {}, null, 2); }
+
+$('go').onclick = async () => {
+  const api = $('api').value.trim().replace(/\/+$/, '');
+  const token = $('tok').value.trim();
+  const role = $('role').value.trim();
+  const isp = $('isp').value.trim();
+  const mode = $('mode').value;
+  if (!token) { say('Paste the calling session’s accessToken first.', 'err'); return; }
+  const body = { action: 'INITIATE_STEP_UP' };
+  if (role) body.role = role;
+  if (isp) body.isp = isp;
+  $('go').disabled = true;
+  say('asking the server to mint the step-up state…');
+  let res, data;
+  try {
+    res = await fetch(api + ACTION, { method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Authorization': 'Bearer ' + token },
+      body: JSON.stringify(body) });
+    const text = await res.text();
+    try { data = text ? JSON.parse(text) : null; } catch { data = text; }
+  } catch (e) {
+    say('Network or CORS failure — ' + e.message + '. This page origin is ' + location.origin +
+        '; the API must allow it, including the <code>X-Authorization</code> header, for the authenticated call.', 'err');
+    $('go').disabled = false;
+    return;
+  }
+  showRaw(data);
+  if (!res.ok || !data || !data.authorizationUrl) {
+    say('Refused: ' + res.status + ' · ' + ((data && (data.errorType || data.message)) || res.status) +
+        (data && data.errorCode === 1425 ? ' — the target is not an elevation, no step-up is owed.' : '') +
+        (data && data.errorCode === 1426 ? ' — a PASSWORD account completes on the switch itself with stepUp {password}.' : ''), 'err');
+    $('go').disabled = false;
+    return;
+  }
+  // The callback page reads this to know that the code must be redeemed at SWITCH_CONTEXT, with
+  // this token, and never at the sign-in route (which would burn the single-use state).
+  sessionStorage.setItem('optim.pending', JSON.stringify({ purpose: 'STEP_UP', api, token, role, isp, mode, state: data.state }));
+  say('state minted (expiresIn=' + data.expiresIn + 's) — navigating to the provider; it must ask for the password again (prompt=login, max_age=0).', 'ok');
+  location.href = data.authorizationUrl;
+};
+</script>
+</body>
+</html>

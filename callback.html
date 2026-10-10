@@ -235,6 +235,66 @@ async function submit(action){
       ).join(' · ') + '</p>' : '');
 }
 
+/**
+ * The step-up half of the callback (stepup.html stashed the calling session and the target).
+ * Shows the code and state in full — so the completion can also be sent from elsewhere — and
+ * offers to send it from here: POST /v6/me/sessions/current/action with the calling session's
+ * token and {action: SWITCH_CONTEXT, role?, isp?, mode, stepUp: {code, state}}.
+ */
+function offerStepUp(){
+  const cbUrl = location.href.replace(/#.*$/, '');
+  $('result').innerHTML =
+    '<p class="muted">The provider sent you back with a usable <code>code</code> for a <b>step-up</b>. ' +
+    'Nothing has been submitted yet \u2014 the state is single-use, so it goes to <code>SWITCH_CONTEXT</code> exactly once.</p>' +
+    '<dl class="row"><dt>code</dt><dd id="fullCode"></dd><dt>state</dt><dd id="fullState"></dd></dl>' +
+    '<div class="choice">' +
+      '<button id="doStepUp" class="primary">Complete the step-up here (' + (pending.mode || 'REPLACE') + ')</button>' +
+      '<button id="copyUrl">Copy callback URL</button>' +
+    '</div>' +
+    '<p class="muted">Target: role <code>' + (pending.role || '(current)') + '</code>, isp <code>' + (pending.isp || '(current)') + '</code>.</p>';
+  $('fullCode').textContent = code;
+  $('fullState').textContent = state;
+  $('copyUrl').onclick = () => navigator.clipboard.writeText(cbUrl);
+  $('doStepUp').onclick = async () => {
+    document.querySelectorAll('.choice button').forEach(b => { b.disabled = true; });
+    const body = { action: 'SWITCH_CONTEXT', mode: pending.mode || 'REPLACE', stepUp: { code, state } };
+    if (pending.role) body.role = pending.role;
+    if (pending.isp) body.isp = pending.isp;
+    let res, data;
+    try {
+      res = await fetch(pending.api + '/actiontec/api/v6/me/sessions/current/action', { method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Authorization': 'Bearer ' + pending.token },
+        body: JSON.stringify(body) });
+      const text = await res.text();
+      try { data = text ? JSON.parse(text) : null; } catch { data = text; }
+    } catch (e) {
+      fail('Network or CORS failure \u2014 ' + e.message + '. The code and state above are still usable from elsewhere ' +
+           'until the state expires; the API must allow this origin and the <code>X-Authorization</code> header.');
+      return;
+    }
+    showRaw(data);
+    if (!res.ok || !data || !data.accessToken) {
+      $('result').innerHTML = '<span class="err">Step-up refused: ' + res.status + ' \u00b7 ' +
+        ((data && (data.errorType || data.message)) || res.status) + '</span>' +
+        '<p class="muted">1421 = state unknown / consumed / expired / another session; 1422 = the provider did not ' +
+        're-authenticate (auth_time before the initiation); 1423 = the re-authenticated identity is not this ' +
+        'session\u2019s user; 1424 = wrong proof shape. The state is spent either way.</p>';
+      return;
+    }
+    sessionStorage.removeItem('optim.pending');
+    const ctx = (data.actRole ? (data.actRole.displayName || data.actRole.name) : '?') + ' @ ' +
+                (data.actIsp ? (data.actIsp.displayName || data.actIsp.name) : '?');
+    $('result').innerHTML =
+      '<span class="ok"><b>Step-up completed.</b></span> <span class="muted">' + ctx + (data.sid ? ' \u00b7 sid ' + data.sid : '') + '</span>' +
+      '<p class="muted">A new session in the elevated context. With REPLACE the calling session\u2019s token is now dead; ' +
+      'with FORK it still works.</p>' +
+      '<textarea id="tok" readonly style="width:100%;height:110px;font:12px/1.5 ui-monospace,Menlo,monospace"></textarea>' +
+      '<div style="margin-top:8px"><button id="copy">Copy token</button></div>';
+    $('tok').value = data.accessToken;
+    $('copy').onclick = () => { $('tok').select(); navigator.clipboard.writeText(data.accessToken); };
+  };
+}
+
 function run(){
   if (perr) {
     fail('The provider refused: ' + perr + ' — nothing was sent to the API.');
@@ -250,6 +310,13 @@ function run(){
   // nothing it needs, so "nothing stashed" IS the sign-in case.
   if (!pending || pending.purpose === 'SIGN_IN') {
     return signIn();
+  }
+  // A step-up round trip (UC-12 / SW-5, stepup.html): the code is redeemed at SWITCH_CONTEXT on
+  // the calling session, never at the sign-in route — the state is single-use and is consumed
+  // on the first redemption whatever the route, so sending it to /sessions here would burn it
+  // (1472 there, then 1421 on the real completion).
+  if (pending.purpose === 'STEP_UP') {
+    return offerStepUp();
   }
   if (pending.state && pending.state !== state) {
     // Not the security check — the server enforces that. This only catches a stale tab.
