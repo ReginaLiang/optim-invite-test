@@ -239,7 +239,8 @@ async function submit(action){
  * The step-up half of the callback (stepup.html stashed the calling session and the target).
  * Shows the code and state in full — so the completion can also be sent from elsewhere — and
  * offers to send it from here: POST /v6/me/sessions/current/action with the calling session's
- * token and {action: SWITCH_CONTEXT, role?, isp?, mode, stepUp: {code, state}}.
+ * token and {action: SWITCH_CONTEXT, role?, isp?, stepUp: {code, state}}. No mode: every switch replaces
+ * the calling session (FORK was withdrawn, TRS SW-1).
  */
 function offerStepUp(){
   const cbUrl = location.href.replace(/#.*$/, '');
@@ -251,7 +252,7 @@ function offerStepUp(){
     '<textarea id="cbUrl" readonly style="width:100%;height:80px;font:12px/1.5 ui-monospace,Menlo,monospace"></textarea>' +
     '<div class="choice">' +
       '<button id="copyUrl" class="primary">Copy callback URL</button>' +
-      '<button id="doStepUp">Complete the step-up here (' + (pending.mode || 'REPLACE') + ')</button>' +
+      '<button id="doStepUp">Complete the step-up here</button>' +
     '</div>' +
     '<p class="muted">Target: role <code>' + (pending.role || '(current)') + '</code>, isp <code>' + (pending.isp || '(current)') + '</code>.</p>';
   $('fullCode').textContent = code;
@@ -262,7 +263,7 @@ function offerStepUp(){
     // The state is single-use: once this is sent nothing else can redeem the code.
     if (!confirm('Send the code to SWITCH_CONTEXT now? The state is single-use \u2014 if you meant to copy the callback URL instead, choose Cancel.')) return;
     document.querySelectorAll('.choice button').forEach(b => { b.disabled = true; });
-    const body = { action: 'SWITCH_CONTEXT', mode: pending.mode || 'REPLACE', stepUp: { code, state } };
+    const body = { action: 'SWITCH_CONTEXT', stepUp: { code, state } };
     if (pending.role) body.role = pending.role;
     if (pending.isp) body.isp = pending.isp;
     let res, data;
@@ -291,8 +292,7 @@ function offerStepUp(){
                 (data.actIsp ? (data.actIsp.displayName || data.actIsp.name) : '?');
     $('result').innerHTML =
       '<span class="ok"><b>Step-up completed.</b></span> <span class="muted">' + ctx + (data.sid ? ' \u00b7 sid ' + data.sid : '') + '</span>' +
-      '<p class="muted">A new session in the elevated context. With REPLACE the calling session\u2019s token is now dead; ' +
-      'with FORK it still works.</p>' +
+      '<p class="muted">The calling session now acts in the elevated context; its previous token is dead \u2014 use the one below.</p>' +
       '<textarea id="tok" readonly style="width:100%;height:110px;font:12px/1.5 ui-monospace,Menlo,monospace"></textarea>' +
       '<div style="margin-top:8px"><button id="copy">Copy token</button></div>';
     $('tok').value = data.accessToken;
